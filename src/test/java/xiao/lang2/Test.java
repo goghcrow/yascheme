@@ -1,5 +1,7 @@
 package xiao.lang2;
 
+import xiao.lang2.expander2.UnitTest;
+
 import java.util.List;
 
 import static xiao.lang2.Misc.resource;
@@ -12,6 +14,9 @@ public class Test {
     public static void main(String[] args) {
         test_parser();
         TestPatternMatch.test();
+        UnitTest.test();
+        TestExpand2.test();
+        TestExpand2.main(args);
 
         // debug(resource("/pure.ss")); System.exit(0);
         // Interp.interp(resource("/bug.ss"));

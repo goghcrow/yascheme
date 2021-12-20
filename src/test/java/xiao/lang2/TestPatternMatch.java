@@ -1,9 +1,10 @@
 package xiao.lang2;
 
+import xiao.lang2.expander2.Syntax;
+
 import static xiao.lang2.Pattern.*;
 import static xiao.lang2.Pattern.Matcher.makeEmptyVars;
-import static xiao.lang2.Procedures.Null;
-import static xiao.lang2.Procedures.sym;
+import static xiao.lang2.Procedures.*;
 import static xiao.lang2.TestMisc.*;
 import static xiao.lang2.Values.PList;
 
@@ -13,12 +14,50 @@ public interface TestPatternMatch {
         return Procedures.list(args);
     }
 
+    // todo 检查所有的 pair?
+
+
+    // todo pair pattern 测试
+    // todo 测试一些 cons 结构的 syntax-list
     static PList match(String pattern, Object s) {
         return new Matcher(s, Parser.parse1(pattern), new String[0]).doMatch();
     }
+    static void tmp() {
+        PList r3 = match("(let ([id val-expr] ...) body ...+)", Reader.read("(let ([+ (lambda (x y)\n" +
+                "           (if (string? x)\n" +
+                "             (string-append x y)\n" +
+                "             (+ x y)))]) ; use original +\n" +
+                "  (list (+ 1 2)\n" +
+                "    (+ \"see\" \"saw\")))"));
+
+        {
+            Syntax s = Syntax.fromDatum(null, Parser.parse1(
+                    "( (( ((a1 a2 a3) a4) ((b1 b2 b3) b4) ) x5) (( ((c1 c2 c3) c4) ((d1 d2 d3) d4) ) y5) )"
+            ));
+            PList r = match("(((((a ...) b) ...) c) ...)", s);
+            System.out.println(r);
+        }
+
+
+        {
+            Object form = Parser.parse1("(1 (2 3))");
+            Syntax s = Syntax.fromDatum(null, form);
+
+            PList r1 = match("(id1 id1)", form);
+            System.out.println(r1);
+
+            PList r2 = match("id1", s);
+            System.out.println(r2);
+        }
+    }
+
 
     static void test() {
+        tmp();
         test_makeEmptyVars();
+        test_toSyntaxListEx();
+        test_toSyntaxList();
+        test_matchSyntax();
 
         test_id();
         test_cases();
@@ -53,6 +92,125 @@ public interface TestPatternMatch {
         expectTrue(Pattern.ofStr("not_id").tryMatch(Parser.parse1("(1 2 3)")) != null);
     }
 
+    static void test_toSyntaxListEx() {
+        try {
+            Matcher m = new Matcher(Syntax.of(null), "()", new String[0]);
+            // (cons 1 2)
+            Syntax s = Syntax.of(cons(Syntax.of(1), Syntax.of(2)));
+            m.toSyntaxList(s);
+            throw new RuntimeException();
+        } catch (InterpError ignored) {}
+    }
+
+    static void test_toSyntaxList() {
+        Matcher m = new Matcher(Syntax.of(null), "()", new String[0]);
+        PList s123 = list(Syntax.of(1), Syntax.of(2), Syntax.of(3));
+
+        {
+            // (syntax:1 . syntax:(syntax:2 syntax:3)) => (syntax:1 syntax:2 syntax:3)
+            Syntax s = Syntax.of(
+                    cons(
+                            Syntax.of(1),
+                            Syntax.of(list(Syntax.of(2), Syntax.of(3)))
+                    )
+            );
+            PList sl = m.toSyntaxList(s);
+            expectEquals(s123, sl);
+        }
+        {
+            // (syntax:1 . (syntax:2 . (syntax:3 . syntax:null))) => (syntax:1 syntax:2 syntax:3)
+            Syntax s = Syntax.of(
+                    cons(
+                            Syntax.of(1),
+                            cons(
+                                    Syntax.of(2),
+                                    cons(
+                                            Syntax.of(3),
+                                            Syntax.of(Null())
+                                    )
+                            )
+                    )
+            );
+            PList sl = m.toSyntaxList(s);
+            expectEquals(s123, sl);
+        }
+    }
+
+    static void test_matchSyntax() {
+        {
+            PList expr = list(sym("+"), 1, 1);
+            Syntax s = Syntax.fromDatum(null,
+                    list(
+                            sym("define"),
+                            sym("a"),
+                            expr
+                    ));
+            {
+                Finder r = Pattern.of1(Parser.parse1("(define id expr)")).match(s);
+                expectEquals(r.get("expr"), Syntax.fromDatum(null, expr));
+            }
+            {
+                Finder r = Pattern.of2(Parser.parse1("(define id expr)")).match(s);
+                expectEquals(r.get("expr"), Syntax.fromDatum(null, expr));
+            }
+
+        }
+
+
+        {
+            String pattern = "(let-values ([(id ...) rhs] ...) body)";
+            Syntax s = Syntax.fromDatum(null, Parser.parse1(
+                    "(let-values ([(a b) (values 1 2)]\n" +
+                            "             [(c d) (values 3 4)])\n" +
+                            "`(,a ,b, c, d))"
+            ));
+
+            Syntax a = ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) s.e).get(1)).e).get(0)).e).get(0)).e).get(0));
+            Syntax b = ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) s.e).get(1)).e).get(0)).e).get(0)).e).get(1));
+            Syntax c = ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) s.e).get(1)).e).get(1)).e).get(0)).e).get(0));
+            Syntax d = ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) s.e).get(1)).e).get(1)).e).get(0)).e).get(1));
+
+            Syntax rhs12 = (Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) s.e).get(1)).e).get(0)).e).get(1);
+            Syntax rhs34 = (Syntax) ((PList) ((Syntax) ((PList) ((Syntax) ((PList) s.e).get(1)).e).get(1)).e).get(1);
+            Syntax body = (Syntax) ((PList) s.e).get(2);
+
+            {
+                Finder r = of1(Parser.parse1(pattern)).match(s);
+                expectEquals(r.get("let-values"), ((PList) s.e).get(0));
+                expectEquals(r.get("id"),
+                        list(
+                                list(a, b),
+                                list(c, d)
+                        )
+                );
+                expectEquals(r.get("rhs"),
+                        list(
+                                rhs12,
+                                rhs34
+                        )
+                );
+                expectEquals(r.get("body"), body);
+            }
+
+            {
+                Finder r = of2(Parser.parse1(pattern)).match(s);
+                expectEquals(r.get("let-values"), ((PList) s.e).get(0));
+                expectEquals(r.get("id"),
+                        list(
+                                list(a, b),
+                                list(c, d)
+                        )
+                );
+                expectEquals(r.get("rhs"),
+                        list(
+                                rhs12,
+                                rhs34
+                        )
+                );
+                expectEquals(r.get("body"), body);
+            }
+        }
+    }
 
     static void test_cases() {
         assert1("1", new String[0], "1", true);

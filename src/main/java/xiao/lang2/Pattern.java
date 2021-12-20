@@ -1,5 +1,7 @@
 package xiao.lang2;
 
+import xiao.lang2.expander2.Syntax;
+
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -156,6 +158,10 @@ public interface Pattern {
             }
         }
 
+        // return PList | false
+        // 把符合 list 形式的 syntax 解开 syntax 处理成正常的 list<syntax>, e.g.
+        // (syntax:1 . syntax:(syntax:2 syntax:3)) => (syntax:1 syntax:2 syntax:3)
+        // (syntax:1 . (syntax:2 . (syntax:3 . syntax:null))) => (syntax:1 syntax:2 syntax:3)
         public static Object toSyntaxList(Object s) {
             if (isList(s)) {
                 return s;
@@ -166,6 +172,8 @@ public interface Pattern {
                 } else {
                     return cons(car(s), cdr); // loop
                 }
+            } else if (s instanceof Syntax) {
+                return toSyntaxList(((Syntax) s).e);
             } else {
                 return false;
             }
@@ -406,11 +414,12 @@ public interface Pattern {
             return  formals.contains(quote)
                     && pattern instanceof PList
                     && ((PList) pattern).size() == 2
-                    && quote.equals(((PList) pattern).get(0));
+                    && quote.equals(Syntax.toDatum(((PList) pattern).get(0)));
         }
 
         static boolean isIdentifier(Object pattern) {
-            return pattern instanceof Symbol;
+            return pattern instanceof Symbol
+                    || Syntax.isIdentifier(pattern);
         }
     }
 
@@ -447,11 +456,17 @@ public interface Pattern {
                     expect(isIdentifier(s), "not an identifier: " + s);
                 }
                 if (formals.contains(sym)) {
-                    expect(sym.equals(s), "bad syntax: " + origStx);
+                    expect(sym.equals(Syntax.toDatum(s)), "bad syntax: " + origStx);
                     return Null();
                 } else {
                     return list(bingo(sym, s));
                 }
+            } else if (s instanceof Syntax) {
+                // s instanceof Syntax 不能放第一个 if 分支是因为
+                // pattern instanceof Symbol 要匹配到 syntax 对象
+                // 除了 symbol 对应的syntax 不能解开, 要直接匹配
+                // 其他 syntax 必须解开才能匹配
+                return doMatch(((Syntax) s).e, pattern);
             } else if (isEllipsis(pattern)) {
                 return doMatchEllipsis(((PList) pattern), s);
             } else if (isQuote(pattern)) {
@@ -460,7 +475,7 @@ public interface Pattern {
                 expect(isQuote(flatS) &&
                                 Objects.equals(
                                         ((PList) pattern).get(1),
-                                        flatS.get(1)
+                                        Syntax.toDatum(flatS.get(1))
                                 ),
                         "bad syntax: " + origStx);
                 return Null();
@@ -532,6 +547,8 @@ public interface Pattern {
                 return ((PList) s);
             } else if (isPair(s)) {
                 return cons(car(s), toSyntaxList(cdr(s))); // loop
+            } else if (s instanceof Syntax) {
+                return toSyntaxList(((Syntax) s).e);
             } else {
                 throw new InterpError("bad syntax: " + origStx);
             }
@@ -542,11 +559,12 @@ public interface Pattern {
             return  formals.contains(quote)
                     && pattern instanceof PList
                     && ((PList) pattern).size() == 2
-                    && quote.equals(((PList) pattern).get(0));
+                    && quote.equals(Syntax.toDatum(((PList) pattern).get(0)));
         }
 
         static boolean isIdentifier(Object pattern) {
-            return pattern instanceof Symbol;
+            return pattern instanceof Symbol
+                    || Syntax.isIdentifier(pattern);
         }
 
         // 这里可以扩展支持其他字面量匹配
