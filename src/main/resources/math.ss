@@ -1,12 +1,12 @@
 (define <
   (case-lambda
     [(a) (begin a #t)]
-    [(a b . rest) (and (xiao.lang2.Generated/lt a b) (apply < b rest))]))
+    [(a b . rest) (and (xiao.lang.Generated/lt a b) (apply < b rest))]))
 
 (define >
   (case-lambda
     [(a) (begin a #t)]
-    [(a b . rest) (and (xiao.lang2.Generated/gt a b) (apply > b rest))]))
+    [(a b . rest) (and (xiao.lang.Generated/gt a b) (apply > b rest))]))
 
 (define <=
   (case-lambda
@@ -14,7 +14,7 @@
     [(a b . rest)
       (and
         (or
-          (xiao.lang2.Generated/lt a b)
+          (xiao.lang.Generated/lt a b)
           (= a b))
         (apply <= b rest))]))
 
@@ -24,43 +24,43 @@
     [(a b . rest)
       (and
         (or
-          (xiao.lang2.Generated/gt a b)
+          (xiao.lang.Generated/gt a b)
           (= a b))
         (apply >= b rest))]))
 
 (define =
   (case-lambda
-    [(a) (xiao.lang2.Generated/eq a a)] ; 类型检查
+    [(a) (xiao.lang.Generated/eq a a)] ; 类型检查
     [(a b . rest)
       (and
-        (xiao.lang2.Generated/eq a b)
+        (xiao.lang.Generated/eq a b)
         (apply = b rest ))]))
 
 (define +
   (case-lambda
     [() 0]
-    [(a) (xiao.lang2.Generated/add 0 a)] ; 类型检查
-    [(a b . rest) (apply + (xiao.lang2.Generated/add a b) rest)]))
+    [(a) (xiao.lang.Generated/add 0 a)] ; 类型检查
+    [(a b . rest) (apply + (xiao.lang.Generated/add a b) rest)]))
 
 (define -
   (case-lambda
-    [(a) (xiao.lang2.Generated/sub 0 a)]
-    [(a b) (xiao.lang2.Generated/sub a b)]
-    [(a b . rest) (apply - (xiao.lang2.Generated/sub a b) rest)]))
+    [(a) (xiao.lang.Generated/sub 0 a)]
+    [(a b) (xiao.lang.Generated/sub a b)]
+    [(a b . rest) (apply - (xiao.lang.Generated/sub a b) rest)]))
 
 (define *
   (case-lambda
     [() 1]
-    [(a) (xiao.lang2.Generated/mul 1 a)] ; 类型检查
-    [(a b . rest) (apply * (xiao.lang2.Generated/mul a b) rest)]))
+    [(a) (xiao.lang.Generated/mul 1 a)] ; 类型检查
+    [(a b . rest) (apply * (xiao.lang.Generated/mul a b) rest)]))
 
 (define /
   (case-lambda
-    [(a) (xiao.lang2.Generated/div 1 a)]
-    [(a b) (xiao.lang2.Generated/div a b)]
-    [(a b . rest) (apply / (xiao.lang2.Generated/div a b) rest)]))
+    [(a) (xiao.lang.Generated/div 1 a)]
+    [(a b) (xiao.lang.Generated/div a b)]
+    [(a b . rest) (apply / (xiao.lang.Generated/div a b) rest)]))
 
-(define (modulo a b) (xiao.lang2.Generated/modulo a b))
+(define (modulo a b) (xiao.lang.Generated/modulo a b))
 (define rem modulo)
 (define reminder rem)
 
@@ -79,14 +79,14 @@
 ;    ((< a) (begin a #t))
 ;    ((< a b rest ...)
 ;      (let ([$b b])
-;        (and (xiao.lang2.Generated/lt a $b) (< $b rest ...))))))
+;        (and (xiao.lang.Generated/lt a $b) (< $b rest ...))))))
 ;
 ;(define-syntax >
 ;  (syntax-rules ()
 ;    ((> a) (begin a #t))
 ;    ((> a b rest ...)
 ;      (let ([$b b])
-;        (and (xiao.lang2.Generated/gt a $b) (> $b rest ...))))))
+;        (and (xiao.lang.Generated/gt a $b) (> $b rest ...))))))
 ;
 ;(define-syntax <=
 ;  (syntax-rules ()
@@ -95,7 +95,7 @@
 ;      (let ([$b b])
 ;        (and
 ;          (or
-;            (xiao.lang2.Generated/lt a $b)
+;            (xiao.lang.Generated/lt a $b)
 ;            (= a $b))
 ;          (<= $b rest ...))))))
 ;
@@ -106,40 +106,40 @@
 ;      (let ([$b b])
 ;        (and
 ;          (or
-;            (xiao.lang2.Generated/gt a $b)
+;            (xiao.lang.Generated/gt a $b)
 ;            (= a $b))
 ;          (>= $b rest ...))))))
 ;
 ;(define-syntax =
 ;  (syntax-rules ()
-;    ((= a) (xiao.lang2.Generated/eq a a)) ; 类型检查
+;    ((= a) (xiao.lang.Generated/eq a a)) ; 类型检查
 ;    ((= a b rest ...)
 ;      (let ([$b b])
-;        (and (xiao.lang2.Generated/eq a $b) (= $b rest ...))))))
+;        (and (xiao.lang.Generated/eq a $b) (= $b rest ...))))))
 ;(define-syntax +
 ;  (syntax-rules ()
 ;    ((+) 0)
-;    ((+ a) (xiao.lang2.Generated/add 0 a)) ; 类型检查
+;    ((+ a) (xiao.lang.Generated/add 0 a)) ; 类型检查
 ;    ((+ a b rest ...)
-;      (+ (xiao.lang2.Generated/add a b) rest ...))))
+;      (+ (xiao.lang.Generated/add a b) rest ...))))
 ;
 ;(define-syntax -
 ;  (syntax-rules ()
-;    ((- a) (xiao.lang2.Generated/sub 0 a))
-;    ((- a b) (xiao.lang2.Generated/sub a b))
+;    ((- a) (xiao.lang.Generated/sub 0 a))
+;    ((- a b) (xiao.lang.Generated/sub a b))
 ;    ((- a b rest ...)
-;      (- (xiao.lang2.Generated/sub a b) rest ...))))
+;      (- (xiao.lang.Generated/sub a b) rest ...))))
 ;
 ;(define-syntax *
 ;  (syntax-rules ()
 ;    ((*) 1)
-;    ((* a) (xiao.lang2.Generated/mul 1 a)) ; 类型检查
+;    ((* a) (xiao.lang.Generated/mul 1 a)) ; 类型检查
 ;    ((* a b rest ...)
-;      (* (xiao.lang2.Generated/mul a b) rest ...))))
+;      (* (xiao.lang.Generated/mul a b) rest ...))))
 ;
 ;(define-syntax /
 ;  (syntax-rules ()
-;    ((/ a) (xiao.lang2.Generated/div 1 a))
-;    ((/ a b) (xiao.lang2.Generated/div a b))
+;    ((/ a) (xiao.lang.Generated/div 1 a))
+;    ((/ a b) (xiao.lang.Generated/div a b))
 ;    ((/ a b rest ...)
-;      (/ (xiao.lang2.Generated/div a b) rest ...))))
+;      (/ (xiao.lang.Generated/div a b) rest ...))))

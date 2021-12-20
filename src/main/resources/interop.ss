@@ -7,12 +7,12 @@
 ;  (let (($klass (java.lang.Class/forName (symbol->string 'class))))
 ;    (if (.isInterface $klass)
 ;      (let (($methods (car (list args ...))))
-;        (xiao.lang2.JavaInterop$Experimental/proxy
+;        (xiao.lang.JavaInterop$Experimental/proxy
 ;          $klass
 ;          $methods
 ;          (current-environment)))
 ;      (.newInstance
-;        (xiao.lang2.JavaInterop$CallSite/constructor $klass)
+;        (xiao.lang.JavaInterop$CallSite/constructor $klass)
 ;        (.toArray (list args ...))))))
 
 ;; ------------------------------------------------
@@ -108,13 +108,13 @@
 ;  (syntax-rules (.)
 ;    ((set! (. class-or-instance field) expr)
 ;      (begin
-;        ; xiao.lang2.Syntaxes$MemberAccessorExpansion/isJavaClassName
+;        ; xiao.lang.Syntaxes$MemberAccessorExpansion/isJavaClassName
 ;        (if (and
 ;              (symbol? 'class-or-instance)
 ;              (.contains (symbol->string 'class-or-instance) "."))
 ;          ; 静态属性赋值
 ;          (.field
-;            (xiao.lang2.JavaInterop$CallSite/field
+;            (xiao.lang.JavaInterop$CallSite/field
 ;              (java.lang.Class/forName (symbol->string 'class-or-instance))
 ;              (symbol->string 'field))
 ;            NULL
@@ -122,7 +122,7 @@
 ;          ; 实例属性赋值
 ;          (let ([instance class-or-instance])
 ;            (.field
-;              (xiao.lang2.JavaInterop$CallSite/field
+;              (xiao.lang.JavaInterop$CallSite/field
 ;                (class instance)
 ;                (symbol->string 'field))
 ;              instance

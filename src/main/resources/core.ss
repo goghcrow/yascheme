@@ -2,7 +2,7 @@
 ;(define (begin . xs)
 ;  (if (.isEmpty xs)
 ;    (void)
-;    (.get xs (xiao.lang2.Generated/sub (.size xs) 1))))
+;    (.get xs (xiao.lang.Generated/sub (.size xs) 1))))
 (define seq begin)
 
 (define (begin0 . xs)
@@ -20,18 +20,18 @@
 (define (quit) (java.lang.System/exit 0))
 (define exit quit)
 ;(define (load path)
-;  (eval (xiao.lang2.Reader/read
-;          (xiao.lang2.Misc/read path))))
+;  (eval (xiao.lang.Reader/read
+;          (xiao.lang.Misc/read path))))
 
 ; todo check (string?)
-(define (string->symbol str) (xiao.lang2.Procedures/sym str))
+(define (string->symbol str) (xiao.lang.Procedures/sym str))
 ; todo check (symbol?)
 ;(define (symbol->string sym) (.substring (.toString sym) 1))  ; 移除'
 (define (symbol->string sym) (.toString sym))  ; 移除'
 
-(define (cons x y) (xiao.lang2.Procedures/cons x y))
-(define (car x) (xiao.lang2.Procedures/car x))
-(define (cdr x) (xiao.lang2.Procedures/cdr x))
+(define (cons x y) (xiao.lang.Procedures/cons x y))
+(define (car x) (xiao.lang.Procedures/car x))
+(define (cdr x) (xiao.lang.Procedures/cdr x))
 (define (list . args) args)
 (define (first l)
   (if (list? l)
@@ -142,6 +142,6 @@
 (define letrec-syntax letrec)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(define (throw t) (xiao.lang2.Procedures/throw1 t))
+(define (throw t) (xiao.lang.Procedures/throw1 t))
 (define (raise msg) (throw (java.lang.RuntimeException. msg)))
 (define error raise)

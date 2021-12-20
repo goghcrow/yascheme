@@ -3,7 +3,7 @@
 (define null '())
 (define NULL (.clear (java.util.ArrayList.))) ;; 随便找了一个反射返回 void 的方法拿到 java null
 (define empty null)
-(define (void) (xiao.lang2.Procedures/Void))
+(define (void) (xiao.lang.Procedures/Void))
 
 ;; 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 
@@ -24,18 +24,18 @@
 ;; symbol
 (define gensym
   (case-lambda
-    [() (xiao.lang2.Procedures/gensym)]
-    [(prefix) (xiao.lang2.Procedures/gensym prefix)]))
+    [() (xiao.lang.Procedures/gensym)]
+    [(prefix) (xiao.lang.Procedures/gensym prefix)]))
 
 (define (string->symbol str)
   (if (string? str)
-    (xiao.lang2.Procedures/sym str)
+    (xiao.lang.Procedures/sym str)
     (raise "contract violation")))
 (define (symbol->string sym)
   (if
     ;; (symbol? sym)
     ;; 这里不能用 symbol? 因为 symbol? 依赖 instance?, instance? 宏依赖 symbol->string 死循环
-    (eq? (class sym) (java.lang.Class/forName "xiao.lang2.Values$Symbol"))
+    (eq? (class sym) (java.lang.Class/forName "xiao.lang.Values$Symbol"))
     (.toString sym) ; (.substring (.toString sym) 1)
     (raise "contract violation")))
 
@@ -58,27 +58,27 @@
 
 (define (equals? a b) (java.util.Objects/equals a b))
 (define equal? equals?)
-(define (eq? v1 v2) (xiao.lang2.Procedures/eq v1 v2))
+(define (eq? v1 v2) (xiao.lang.Procedures/eq v1 v2))
 
 (define cons? pair?)
 (define (void? x) (.equals (void) x))
 (define (boolean? x) (or (.equals x #t) (.equals x #f)))
 (define (string? x) (instance? java.lang.String x))
 (define (number? x) (instance? java.lang.Number x))
-(define (symbol? x) (instance? xiao.lang2.Values$Symbol x))
-(define (procedure? x) (instance? xiao.lang2.Values$Procedure x))
+(define (symbol? x) (instance? xiao.lang.Values$Symbol x))
+(define (procedure? x) (instance? xiao.lang.Values$Procedure x))
 
 ;; 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 ;; coerce
-(define (byte a) (xiao.lang2.Generated/castToByte a))
-(define (short a) (xiao.lang2.Generated/castToShort a))
-(define (int a) (xiao.lang2.Generated/castToInt a))
-(define (long a) (xiao.lang2.Generated/castToLong a))
-(define (float a) (xiao.lang2.Generated/castToFloat a))
-(define (double a) (xiao.lang2.Generated/castToDouble a))
-(define (char a) (xiao.lang2.Generated/castToChar a))
-(define (bigint a) (xiao.lang2.Generated/castToBigInteger a))
-(define (bigdec a) (xiao.lang2.Generated/castToBigDecimal a))
+(define (byte a) (xiao.lang.Generated/castToByte a))
+(define (short a) (xiao.lang.Generated/castToShort a))
+(define (int a) (xiao.lang.Generated/castToInt a))
+(define (long a) (xiao.lang.Generated/castToLong a))
+(define (float a) (xiao.lang.Generated/castToFloat a))
+(define (double a) (xiao.lang.Generated/castToDouble a))
+(define (char a) (xiao.lang.Generated/castToChar a))
+(define (bigint a) (xiao.lang.Generated/castToBigInteger a))
+(define (bigdec a) (xiao.lang.Generated/castToBigDecimal a))
 
 ;; 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 ;; list
@@ -110,12 +110,12 @@
 (define <
   (case-lambda
     [(a) (begin a #t)]
-    [(a b . rest) (and (xiao.lang2.Generated/lt a b) (apply < b rest))]))
+    [(a b . rest) (and (xiao.lang.Generated/lt a b) (apply < b rest))]))
 
 (define >
   (case-lambda
     [(a) (begin a #t)]
-    [(a b . rest) (and (xiao.lang2.Generated/gt a b) (apply > b rest))]))
+    [(a b . rest) (and (xiao.lang.Generated/gt a b) (apply > b rest))]))
 
 (define <=
   (case-lambda
@@ -123,7 +123,7 @@
     [(a b . rest)
       (and
         (or
-          (xiao.lang2.Generated/lt a b)
+          (xiao.lang.Generated/lt a b)
           (= a b))
         (apply <= b rest))]))
 
@@ -133,43 +133,43 @@
     [(a b . rest)
       (and
         (or
-          (xiao.lang2.Generated/gt a b)
+          (xiao.lang.Generated/gt a b)
           (= a b))
         (apply >= b rest))]))
 
 (define =
   (case-lambda
-    [(a) (xiao.lang2.Generated/eq a a)] ; 类型检查
+    [(a) (xiao.lang.Generated/eq a a)] ; 类型检查
     [(a b . rest)
       (and
-        (xiao.lang2.Generated/eq a b)
+        (xiao.lang.Generated/eq a b)
         (apply = b rest ))]))
 
 (define +
   (case-lambda
     [() 0]
-    [(a) (xiao.lang2.Generated/add 0 a)] ; 类型检查
-    [(a b . rest) (apply + (xiao.lang2.Generated/add a b) rest)]))
+    [(a) (xiao.lang.Generated/add 0 a)] ; 类型检查
+    [(a b . rest) (apply + (xiao.lang.Generated/add a b) rest)]))
 
 (define -
   (case-lambda
-    [(a) (xiao.lang2.Generated/sub 0 a)]
-    [(a b) (xiao.lang2.Generated/sub a b)]
-    [(a b . rest) (apply - (xiao.lang2.Generated/sub a b) rest)]))
+    [(a) (xiao.lang.Generated/sub 0 a)]
+    [(a b) (xiao.lang.Generated/sub a b)]
+    [(a b . rest) (apply - (xiao.lang.Generated/sub a b) rest)]))
 
 (define *
   (case-lambda
     [() 1]
-    [(a) (xiao.lang2.Generated/mul 1 a)] ; 类型检查
-    [(a b . rest) (apply * (xiao.lang2.Generated/mul a b) rest)]))
+    [(a) (xiao.lang.Generated/mul 1 a)] ; 类型检查
+    [(a b . rest) (apply * (xiao.lang.Generated/mul a b) rest)]))
 
 (define /
   (case-lambda
-    [(a) (xiao.lang2.Generated/div 1 a)]
-    [(a b) (xiao.lang2.Generated/div a b)]
-    [(a b . rest) (apply / (xiao.lang2.Generated/div a b) rest)]))
+    [(a) (xiao.lang.Generated/div 1 a)]
+    [(a b) (xiao.lang.Generated/div a b)]
+    [(a b . rest) (apply / (xiao.lang.Generated/div a b) rest)]))
 
-(define (modulo a b) (xiao.lang2.Generated/modulo a b))
+(define (modulo a b) (xiao.lang.Generated/modulo a b))
 (define rem modulo)
 (define reminder rem)
 

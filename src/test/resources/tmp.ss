@@ -73,7 +73,7 @@
 
 
 
-(xiao.lang2.JavaInterop$CallSite/field
+(xiao.lang.JavaInterop$CallSite/field
   (java.lang.Class/forName "java.lang.Void")
   ;  "..."
   "TYPE")
@@ -300,10 +300,10 @@
 ;
 ;(define =
 ;  (syntax-rules ()
-;    ((= a) (xiao.lang2.Generated/eq a a)) ; 类型检查
+;    ((= a) (xiao.lang.Generated/eq a a)) ; 类型检查
 ;    ((= a b rest ...)
 ;      (let ([$b b])
-;        (and (xiao.lang2.Generated/eq a $b) (= $b rest ...)))
+;        (and (xiao.lang.Generated/eq a $b) (= $b rest ...)))
 ;    )))
 ;
 ;; a = 1 b = 1 rest = [2] , a == $b 1 == 1
@@ -381,10 +381,10 @@
 ;  (begin
 ;    (define =
 ;      (syntax-rules ()
-;        ((= a) (xiao.lang2.Generated/eq a a)) ; 类型检查
+;        ((= a) (xiao.lang.Generated/eq a a)) ; 类型检查
 ;        ((= a b rest ...)
 ;          (let ([t b])
-;            (and (xiao.lang2.Generated/eq a t) (= t rest ...))))))
+;            (and (xiao.lang.Generated/eq a t) (= t rest ...))))))
 ;    (displayln (= 1 1 2))
 ;  ))
 ;
@@ -395,10 +395,10 @@
 ;  (begin
 ;    (define =
 ;      (syntax-rules ()
-;        ((= a) (xiao.lang2.Generated/eq a a)) ; 类型检查
+;        ((= a) (xiao.lang.Generated/eq a a)) ; 类型检查
 ;        ((= a b rest ...)
 ;          (let ([t b])
-;            (and (xiao.lang2.Generated/eq a t) (= t rest ...))))))
+;            (and (xiao.lang.Generated/eq a t) (= t rest ...))))))
 ;    (displayln (= 1 1 2))
 ;  ))
 ;
