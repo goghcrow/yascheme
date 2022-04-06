@@ -1,7 +1,0 @@
-(define (print a) (.print java.lang.System/out a) (void))
-(define (println a)
-  (.println java.lang.System/out a)
-  (void))
-(define display print)
-(define displayln println)
-(define (newline) (display "\n"))

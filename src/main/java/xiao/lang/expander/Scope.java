@@ -1,88 +1,99 @@
 package xiao.lang.expander;
 
 import xiao.lang.InterpError;
+import xiao.lang.RT;
 
+import java.io.Serializable;
 import java.util.*;
 import java.util.function.Function;
 
 import static xiao.lang.Contract.expect;
 import static xiao.lang.Misc.Nullable;
-import static xiao.lang.Procedures.*;
 import static xiao.lang.Values.PList;
 import static xiao.lang.Values.Symbol;
+
+// notation
+// -> : map
+// * : product
+// | : union
+// = : type
+// . : prop
+// () : call-method
+// ;; : comment
+//
+// scope-id = int
+// scope = scope-id
+// scope-set = set<scope>
+// binding = local-binding | top-level-binding
+// local-binding = symbol ;; gensym()
+// top-level-binding = symbol ;; core-binding = core-primitive | core-form
 
 /**
  * A scope represents a distinct "dimension" of binding.
  * Scope identity is `eq?` identity.
  * @author chuxiaofeng
  */
-public class Scope {
+public class Scope implements Serializable {
 
-    /*
-    notation
-    -> : map
-    * : product
-    | : union
-    = : type
-    . : prop
-    () : call-method
-    ;; : comment
+    // scope 盘点
+    // https://github.com/yjqww6/macrology/blob/master/scope.md
+    // 对于 phase 无关的各种 scope, 其自身属性并无区别, 主要是按用途来归类.
+    // 按 syntax-debug-info 显示的名字来分, 有以下几种scope:
+    enum Type {
+        // Fully Expanded Program 的 binding form （let-values、#%plain-lambda等）所引入的scope, 用于区分 local 的 binding。
+        // 另外, quote-syntax（不带#:local）完全展开时, 会删去结果中的 local scope
+        // local,
+        local_lambda,
+        local_let,
 
-    scope-id = int
-    scope = scope-id
-    scope-set = set<scope>
-    binding = local-binding | top-level-binding
-    local-binding = symbol ;; gensym()
-    top-level-binding = symbol ;; core-binding = core-primitive + core-form
-     */
+        // 宏展开引入的scope, 通过宏展开前后的两次反转, 所有展开过程中新引入的syntax对象都会添加上该scope
+        macro,
+
+        // 当一个宏的定义和使用在同一个 definition context 时, 宏的参数会带上该scope
+        use_site,
+
+        // 展开module时引入的scope (这里没有实现 module, 把 coreScope 标记成 module）
+        module,
+
+        // 展开 internal definition context 时引入的 scope
+        intdef,
+
+        // 顾名思义, syntax-local-lift-require的产物。(也没实现)
+        // lifted_require,
+
+        // letrec-values/letrec-syntaxes+values添加到其"body"（"rhs"没有）的scope
+        letrec_body
+    }
+    // 另外
+    // inside-edge scope 和 outside-edge scope
+    // 在 definition context 展开的时候, 输入的 syntax 对象会带上 outside-edge scope 和 inside-edge scope;
+    // 并且, 展开的结果也会带上 inside-edge scope.
+    // outside-edge scope 区分宏引入的 identifier, inside-edge scope 区分不同的 definition context.
+    // 这两种 scope 并不是新种类的 scope, 而是从另一个维度对上述的各种scope进行分类.
+    //
+    // 对于各种 definition context:
+    //  - top-level 的情况：充当 outside-edge scope 的是一个所有 top-level 共享的 scope, 即上文出现的 #(0 module);
+    //      充当 inside-edge scope 的是一个特定的 “multi scope”. namespace-syntax-introduce 就是添加这对scope.
+    //  - module 的情况：充当 outside-edge scope 的是特定的 module scope;
+    //      充当 inside-edge scope 的是一个特定的“multi scope” .
+    //  - internal definition context 的情况：充当 inside-edge scope 的是特定的 intdef scope;
+    //      充当 outside-edge scope 的是外面的 binding form 特定的 local scope, 以及letrec-body scope（如果存在）.
+    //  - first class internal definition context 的情况和上面类似——除了没有 outside-edge scope, 这也导致了一些卫生问题.
+
 
     // https://github.com/yjqww6/macrology/blob/master/scope.md
-    //
-    // ## scope 盘点
-    // 对于 phase 无关的各种scope，其自身属性并无区别，主要是按用途来归类。
-    // 按syntax-debug-info显示的名字来分，有以下几种scope：
-    // - local
-    // Fully Expanded Program 的 binding form （let-values、#%plain-lambda等）所引入的scope，用于区分local 的 binding 。
-    // 另外，quote-syntax（不带#:local）完全展开时，会删去结果中的local scope。
-    // - macro
-    // 宏展开引入的scope，通过宏展开前后的两次反转，所有展开过程中新引入的syntax对象都会添加上该scope。
-    // - use-site
-    // 当一个宏的定义和使用在同一个 definition context 时，宏的参数会带上该scope。
-    // - module
-    // 展开module时引入的scope。
-    // - intdef
-    // 展开 internal definition context 时引入的scope。
-    // - lifted-require
-    // 顾名思义，syntax-local-lift-require的产物。
-    // - letrec-body
-    // letrec-values/letrec-syntaxes+values添加到其“body”（“rhs”没有）的scope。
-    //
-    // inside-edge scope和outside-edge scope
-    // 在 definition context 展开的时候，输入的syntax对象会带上 outside-edge scope 和 inside-edge scope ；
-    // 并且，展开的结果也会带上 inside-edge scope 。
-    // outside-edge scope 区分宏引入的 identifier ， inside-edge scope 区分不同的 definition context 。
-    // 这两种scope并不是新种类的scope，而是从另一个维度对上述的各种scope进行分类。
-    // 对于各种 definition context ：
-    //  - top-level的情况：充当 outside-edge scope 的是一个所有top-level共享的scope，即上文出现的#(0 module)；
-    //      充当 inside-edge scope 的是一个特定的“multi scope”。namespace-syntax-introduce就是添加这对scope。
-    //  - module的情况：充当 outside-edge scope 的是特定的module scope；
-    //      充当 inside-edge scope 的是一个特定的“multi scope”。
-    //  - internal definition context 的情况：充当 inside-edge scope 的是特定的intdef scope；
-    //      充当 outside-edge scope 的是外面的 binding form 特定的local scope，以及letrec-body scope（如果存在）。
-    //  - first class internal definition context 的情况和上面类似——除了没有 outside-edge scope ，这也导致了一些卫生问题。
-    //
     // ## Scope和Binding 的关系：
     //    Binding as Sets of Scopes中提到
     //    > extends a global table that maps a ⟨symbol, scope set⟩ pair to a representation of a binding.
-    //    那么Racket中存在这么一张全局的表吗？按照常识，正经的实现里肯定不会出现一个这么容易内存泄漏的结构。这里就可能导致一些误区：
+    //    那么 Racket 中存在这么一张全局的表吗？按照常识, 正经的实现里肯定不会出现一个这么容易内存泄漏的结构。这里就可能导致一些误区：
     //     - 认为 identifier 捕获了自身所在的局部环境——实际上 identifier 仍然只是 symbol + scope set。
-    //     - 认为解析一个 identifier 的 binding 依赖当前环境——实际上identifier-binding这个函数并不需要一个namespace参数。
-    //    这些看起来暗示着这么一张全局的表的存在，但实际上Racket使用的是一个等效的结构：scope反过来索引了包含了该scope的binding。
-    //    把一个 identifier 添加为 binding 的时候， binding 的信息也被记录到其scope set的一个scope里，
-    //    这个scope set的超集总是能访问到该 binding 。因此在分析问题时，可以简单地假定这张表存在。
+    //     - 认为解析一个 identifier 的 binding 依赖当前环境——实际上 identifier-binding 这个函数并不需要一个namespace参数
+    //    这些看起来暗示着这么一张全局的表的存在, 但实际上Racket使用的是一个等效的结构：scope 反过来索引了包含了该 scope 的 binding.
+    //    把一个 identifier 添加为 binding 的时候, binding 的信息也被记录到其scope set的一个scope里,
+    //    这个scope set的超集总是能访问到该 binding. 因此在分析问题时, 可以简单地假定这张表存在.
     //
     //    ## binding的解析
-    //    Sets of Scopes下的binding解析就是寻找scope set的greatest子集而已，找不到任何子集就“unbound identifier”，
+    //    Sets of Scopes下的binding解析就是寻找scope set的greatest子集而已, 找不到任何子集就“unbound identifier”,
     //    找到多个maximal子集就“identifier's binding is ambiguous”。
     //
     //    ;; 原来版本结构
@@ -101,7 +112,7 @@ public class Scope {
     //
     //    ;; 现在结构
     //    ;; scope 反过来索引了包含了该 scope 的 binding。
-    //    ;; 把一个 identifier 添加为 binding 的时候， binding 的信息也被记录到其scope set的一个scope里,
+    //    ;; 把一个 identifier 添加为 binding 的时候,  binding 的信息也被记录到其scope set的一个scope里,
     //    ;; 这个 scope set 的超集总是能访问到该 binding
     //    ;; 给 id 添加 binding 时候, binding 被记录到自身 scope-set 最新的 scope 中, 通过 id 自身的 scope-set 总能访问到该 binding
     //    ;; 其实就相当于 global binding table 搞成一个二级的结构, bindings = symbol -> identifier -> binding, 查找时候先定位 symbol
@@ -118,8 +129,38 @@ public class Scope {
     //    generally not share a most-recent scope.
 
 
-    public static Scope of() {
-        return new Scope();
+    // Each new scope increments the counter, so we can check whether one
+    // scope is newer than another.
+    private static int cnt_ = 0;
+    final int id = ++cnt_; // internal scope identity; used for sorting
+    final Type type;
+
+    // sym -> scope-set -> binding
+    final Map<Symbol, Map<ScopeSet, Binding>> bindings = new HashMap<>();
+
+    // S for debug
+    private Scope(Type type, Syntax s) {
+        this.type = type;
+    }
+
+    @Override
+    public String toString() {
+        if (type == null) {
+            return "#<scope: " + id + ">";
+        } else {
+            String t = type.toString().replace('_', '-');
+            return "#<" + t + ": " + id + ">";
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
+    public static Scope of(Type type) {
+        return new Scope(type, null);
+    }
+
+    public static Scope of(Type type, Syntax dbgS) {
+        return new Scope(type, dbgS);
     }
 
     // add a scope everywhere, including in nested
@@ -152,32 +193,15 @@ public class Scope {
             Object e = adjustScope(st.e, mapper);
             return Syntax.of(e, mapper.apply(st.scopes), st.props);
         } else if (s instanceof PList) {  // fast-route
-            return map(el -> adjustScope(el, mapper), ((PList) s));
-        } else if (isPair(s)) {
-            return cons(
-                    adjustScope(car(s), mapper),
-                    adjustScope(cdr(s), mapper)
+            return RT.map(el -> adjustScope(el, mapper), ((PList) s));
+        } else if (RT.isPair(s)) {
+            return RT.cons(
+                    adjustScope(RT.car(s), mapper),
+                    adjustScope(RT.cdr(s), mapper)
             );
         } else {
             return s;
         }
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////
-
-    // Each new scope increments the counter, so we can check whether one
-    // scope is newer than another.
-    private static int cnt_ = 0;
-    final int id = ++cnt_; // internal scope identity; used for sorting
-
-    // sym -> scope-set -> binding
-    final Map<Symbol, Map<ScopeSet, Binding>> bindings = new HashMap<>();
-
-    private Scope() { }
-
-    @Override
-    public String toString() {
-        return "#<scope: " + id + ">";
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////

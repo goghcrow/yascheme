@@ -3,17 +3,21 @@ package xiao.lang;
 import java.lang.Void;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
 
 import static xiao.lang.Contract.expect;
+import static xiao.lang.Interop.*;
 import static xiao.lang.Interp.Ctx;
-import static xiao.lang.JavaInterop.*;
 import static xiao.lang.Names.*;
 import static xiao.lang.Pattern.Finder;
-import static xiao.lang.Procedures.*;
-import static xiao.lang.Procedures.Void;
+import static xiao.lang.Procedures.Closure;
 import static xiao.lang.Procedures.MultiValues.values;
-import static xiao.lang.Reader.MemberAccessorExpansion.isJavaClassName;
+import static xiao.lang.RT.Void;
+import static xiao.lang.RT.*;
+import static xiao.lang.Reader.isJavaClassName;
 import static xiao.lang.Values.*;
 
 /**
@@ -22,77 +26,58 @@ import static xiao.lang.Values.*;
  */
 public interface Syntaxes {
 
-    static void init(Interp interp, Env e) {
-        // todo 逐步干掉 syntax_rules
-        e.put(SYNTAX_RULES, new SyntaxRules(interp));
+    static void init(Env e) {
+        e.put(SET, new Set());
+        e.put(IF, new If());
 
-        // todo 程序外层包裹一层 (lambda () ...) 或者 (let-values () ...), 这样就能用 define-values 了
-        // todo 用宏实现
-        // e.g. (define (a) a)  --> (define-values (a) (lambda () a))
-        // e.g. (define-values (a) (quote 1))
-        e.put(DEFINE, new Define(interp));
-        e.put(SET, new Set(interp));
-        e.put(IF, new If(interp));
+        e.put(BEGIN, new Begin(false)); // seq
+        e.put(BEGIN0, new Begin(true));
 
-        Begin begin = new Begin(interp, false);
-        e.put(BEGIN, begin);
-        // e.put("seq", begin);
-        e.put(BEGIN0, new Begin(interp, true));
-
-        Lambda λ = new Lambda(interp);
+        //noinspection NonAsciiCharacters
+        Lambda λ = new Lambda();
         e.put(LAMBDA, λ);
         e.put(LAMBDA0, λ);
+        e.put(CASE_LAMBDA, new CaseLambda());
 
-        e.put(CASE_LAMBDA, new CaseLambda(interp));
-
-        // quote 会原封不动返回, quasiquote 会处理内部 unquote unquote-splicing
         e.put(QUOTE, new Quote());
-        e.put(QUASIQUOTE, new Quasiquote(interp));
 
-        e.put(DEFINE_VALUES, new DefineValues(interp));
-        e.put(LET_VALUES, new LetValues(interp, false));
-        e.put(LETREC_VALUES, new LetValues(interp, true));
+        e.put(DEFINE_VALUES, new DefineValues());
+        e.put(LET_VALUES, new LetValues());
+        e.put(LETREC_VALUES, new LetrecValues());
 
-        e.put(DOT, new MemberAccessor(interp));
-        e.put(NEW, new New(interp));
+        e.put(DOT, new MemberAccessor());
+        e.put(NEW, new New());
 
-        e.put("debugger", new Debugger(interp));
+        e.put(DEBUGGER, new Debugger());
     }
 
     // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 
     class Debugger implements Syntax {
-        final Interp interp;
-
-        Debugger(Interp interp) {
-            this.interp = interp;
-        }
-
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
-            expect(forms.length == 1, "(debugger a)");
-            interp.interp1(forms[0], E, arg -> {
+            expect(forms.length <= 1, "(debugger a)");
+            if (forms.length == 1) {
+                // todo 用宏实现
                 System.out.println("----------------------------------------------");
                 System.out.println("debugger: " + forms[0]);
-                System.out.println("result: " + arg);
-                System.out.println("----------------------------------------------\n");
+                Interp.interp1(forms[0], E, arg -> {
+                    System.out.println("result: " + arg);
+                    System.out.println("----------------------------------------------\n");
+                    K.apply(Void());
+                });
+            } else {
                 K.apply(Void());
-            });
+            }
         }
 
         @Override
         public String toString() {
-            return "#<syntax:debugger>";
+            return "#<syntax:" + DEBUGGER + ">";
         }
     }
 
     class If implements Syntax {
-        final Interp interp;
-
-        If(Interp interp) {
-            this.interp = interp;
-        }
-
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
             String sig = "(if test consequent alternate)";
@@ -101,15 +86,15 @@ public interface Syntaxes {
             Object consequent = r.get("consequent");
             Object alternate = r.get("alternate");
 
-            interp.interp1(test, E, v -> {
+            Interp.interp1(test, E, v -> {
                 // 这里采用跟 scheme 一样的逻辑, 只有 #f 是 false
                 // expect(v instanceof Boolean, "类型错误: (if BOOL_COND then else)");
                 // boolean bool = (Boolean) v;
                 boolean bool = !Boolean.FALSE.equals(v);
                 if (bool) {
-                    interp.interp1(consequent, E, K);
+                    Interp.interp1(consequent, E, K);
                 } else {
-                    interp.interp1(alternate, E, K);
+                    Interp.interp1(alternate, E, K);
                 }
             });
         }
@@ -121,12 +106,6 @@ public interface Syntaxes {
     }
 
     class Set implements Syntax {
-        final Interp interp;
-
-        Set(Interp interp) {
-            this.interp = interp;
-        }
-
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
             Finder r = tryMatch("(set! id expr)", forms);
@@ -144,7 +123,7 @@ public interface Syntaxes {
             Object expr = r.get("expr");
 
             expect(id instanceof Symbol, sig);
-            interp.interp1(expr, E, val -> {
+            Interp.interp1(expr, E, val -> {
                 Syntaxes.setId(((Symbol) id), val, E, K);
             });
         }
@@ -159,13 +138,13 @@ public interface Syntaxes {
             Object expr = r.get("expr");
             if (isJavaClassName(clsOrIns)) {
                 Class<?> klass = Misc.classOf(((Symbol) clsOrIns).name);
-                interp.interp1(expr, E, val -> {
+                Interp.interp1(expr, E, val -> {
                     CallSite.field(klass, field.name).field(null, val);
                     K.apply(Void.TYPE);
                 });
             } else {
-                interp.interp1(clsOrIns, E, ins -> {
-                    interp.interp1(expr, E, val -> {
+                Interp.interp1(clsOrIns, E, ins -> {
+                    Interp.interp1(expr, E, val -> {
                         Class<?> cls = ins.getClass();
                         CallSite.field(cls, field.name).field(ins, val);
                         K.apply(Void.TYPE);
@@ -181,11 +160,9 @@ public interface Syntaxes {
     }
 
     class Begin implements Syntax {
-        final Interp interp;
         final boolean zero;
 
-        Begin(Interp interp, boolean zero) {
-            this.interp = interp;
+        Begin(boolean zero) {
             this.zero = zero;
         }
 
@@ -195,7 +172,7 @@ public interface Syntaxes {
             String sig = "(begin body ...)";
             Finder r = match(sig, forms);
             List<Object> body = r.get("body");
-            begin(interp, body, E, K, zero);
+            begin(body, E, K, zero);
         }
 
         @Override
@@ -204,11 +181,11 @@ public interface Syntaxes {
         }
     }
 
-    static void begin(Interp interp, List<Object> body, Env E, Ctx K, boolean zero) {
+    static void begin(List<Object> body, Env E, Ctx K, boolean zero) {
         if (body.isEmpty()) {
             K.apply(Void());
         } else {
-            interp.interpN(body.toArray(), E, xs -> {
+            Interp.interpN(body.toArray(), E, xs -> {
                 Object[] a = (Object[]) xs;
                 K.apply(a[zero ? 0 : a.length - 1]);
             });
@@ -218,32 +195,10 @@ public interface Syntaxes {
     //////////////////////////////////////////////////////////////////////////////////////////
 
     class Quote implements Syntax {
-
-        Quote() { }
-
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
             expect(forms.length == 1, "语法错误: (quote ONLY_ONE)");
-            K.apply(quote(forms[0]));
-        }
-
-        Object quote(Object a) {
-            if (a instanceof PList) {
-                PList l = (PList) a;
-                if (l.size() == 3) {
-                    Object car = l.get(0);
-                    Object cadr = l.get(1);
-                    Object caddr = l.get(2);
-                    if (cadr instanceof Symbol && ((Symbol) cadr).name.equals(DOT)) {
-                        return cons(quote(car), quote(caddr));
-                    }
-                }
-                return map(this::quote, l);
-            } else if (a instanceof Pair) {
-                return cons(quote(car(a)), quote(cdr(a)));
-            } else {
-                return a;
-            }
+            K.apply(forms[0]);
         }
 
         @Override
@@ -252,205 +207,67 @@ public interface Syntaxes {
         }
     }
 
-    class Quasiquote implements Syntax {
-        final Interp interp;
-
-        Quasiquote(Interp interp) {
-            this.interp = interp;
-        }
-
-        @Override
-        public void call(Object[] forms, Env E, Ctx K) {
-            expect(forms.length == 1, "语法错误: (quasiquote ONLY_ONE)");
-            interpQuasiQuote(forms[0], E, K);
-        }
-
-        void interpQuasiQuote(Object C, Env E, Ctx K) {
-            if (C instanceof PList) {
-                PList lst = ((PList) C);
-                if (lst.size() > 0 && sym(UNQUOTE).equals(lst.get(0))) {
-                    expect(lst.size() == 2, "参数个数错误: (unquote ONLY_ONE_NODE)");
-                    interp.interp1(lst.get(1), E, K);
-                } else if (lst.size() > 0 && sym(UNQUOTE_SPLICING).equals(lst.get(0))) {
-                    expect(lst.size() == 2, "参数个数错误: (unquote-splicing ONLY_ONE_NODE)");
-                    interp.interp1(lst.get(1), E, v -> {
-                        expect(v instanceof PList, "参数类型错误: (unquote-splicing LIST)");
-                        K.apply(new Splicing(v));
-                    });
-                } else if (lst.size() == 3
-                        && lst.get(1) instanceof Symbol
-                        && ((Symbol) lst.get(1)).name.equals(DOT)) {
-                    Object car = lst.get(0);
-                    Object caddr = lst.get(2);
-                    interpQuasiQuote(car, E, x -> {
-                        interpQuasiQuote(caddr, E, y -> {
-                            K.apply(cons(x, y));
-                        });
-                    });
-                } else {
-                    interpQuasiQuoteList(lst, 0, E, xs -> {
-                        K.apply(Splicing.splice((Object[]) xs));
-                    });
-                }
-            } else {
-                K.apply(C);
-            }
-        }
-
-        void interpQuasiQuoteList(
-                PList lst,
-                int idx,
-                Env E,
-                Ctx K
-        ) {
-            int sz = lst.size();
-            if (idx == sz) {
-                K.apply(new Object[sz]);
-            } else {
-                Object C = lst.get(idx);
-                interpQuasiQuote(C, E, it -> {
-                    interpQuasiQuoteList(lst, idx + 1, E, xs -> {
-                        ((Object[]) xs)[idx] = it;
-                        K.apply(xs);
-                    });
-                });
-            }
-        }
-
-        @Override
-        public String toString() {
-            return "#<syntax:" + QUASIQUOTE + ">";
-        }
-
-        private static class Splicing {
-            final Object v;
-
-            Splicing(Object v) {
-                this.v = v;
-            }
-
-            static PList splice(Object[] arr) {
-                List<Object> lst = new ArrayList<>();
-                for (Object o : arr) {
-                    if (o instanceof Splicing) {
-                        Object v = ((Splicing) o).v;
-                        if (v instanceof PList) {
-                            lst.addAll(((PList) v));
-                        } else {
-                            lst.add(v);
-                        }
-                    } else {
-                        lst.add(o);
-                    }
-                }
-                return listColl(lst);
-            }
-        }
-    }
-
     //////////////////////////////////////////////////////////////////////////////////////////
 
     class DefineValues implements Syntax {
-        final Interp interp;
-
-        public DefineValues(Interp interp) {
-            this.interp = interp;
+        @Override
+        public void call(Object[] forms, Env E, Ctx K) {
+            Finder r = match("(define-values (id ...+) expr)", forms);
+            List<Symbol> ids = r.get("id");
+            Object expr = r.get("expr");
+            Interp.interp1(expr, E, x -> {
+                PList values = values(x);
+                expect(values.size() == ids.size(), "arity mismatch");
+                defines(ids, values, E, K);
+            });
         }
 
         @Override
         public String toString() {
             return "#<syntax:" + DEFINE_VALUES + ">";
         }
-
-        @Override
-        public void call(Object[] forms, Env E, Ctx K) {
-            Finder r = match("(define-values (id ...+) expr)", forms);
-            List<Symbol> ids = r.get("id");
-            Object expr = r.get("expr");
-            interp.interp1(expr, E, x -> {
-                PList values = values(x);
-                expect(values.size() == ids.size(), "arity mismatch");
-                defines(ids, values, E, K);
-            });
-        }
     }
 
     class LetValues implements Syntax {
-        final Interp interp;
-        final boolean rec;
-
-        public LetValues(Interp interp, boolean rec) {
-            this.interp = interp;
-            this.rec = rec;
-        }
-
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
-            Finder r = match("(_ ([(id ...) val] ...) body ...+)", forms);
+            Finder r = match("(let-values ([(id ...) val] ...) body ...+)", forms);
             PList idss = r.get("id"); // List<List<Symbol>>
             PList vals = r.get("val");
             PList bodys = r.get("body");
-            if (rec) {
-                Env letE = E.derive();
-                letrecValues(idss, vals, bodys, letE, K);
-            } else {
-//                Env letE = E;
-//                letValues(idss, vals, bodys, E, letE, K);
-                letValues1(idss, vals, bodys, E, K);
-            }
+            letValues(idss, vals, bodys, E, K);
         }
 
-        // 1.2.3 顺序原因, case
-        // false
-        // (println
-        //  (letrec ((x (call/cc list)))
-        //    (println x)
-        //    (if (pair? x)
-        //      ((car x) (lambda () x))
-        //      (pair? (x)))
-        //  ))
-        // true
-        // (println
-        //  (let ((x (call/cc list)))
-        //    (if (pair? x)
-        //      ((car x) (lambda () x))
-        //      (pair? (x)))))
+        void letValues(PList idss, PList vals, PList bodys, Env E, Ctx K) {
+            // 这里注意环境派生从 K 外部转移到 K 内部, 因为如果在同一个环境重复执行绑定会导致重复定义
+            // 这里处理成, 在 val 求值完的 K 内部派生环境
+            // 没有按照规范去实现, 表现出来的语义是相同的
 
-        void letValues(PList idss, PList vals, PList bodys, Env E, Env letE, Ctx K) {
-            if (isNull(vals)) {
-//                // 特殊处理: (let (没有 bind) 开新作用域)
-//                if (E == letE) {
-//                    begin(interp, bodys, E.derive(), K, false);
-//                } else {
-//                    begin(interp, bodys, letE, K, false);
-//                }
-                // 之所以注释掉是因为宏展开 expandBody 中, 如果 body 中有 define-values
-                // 会把 body 翻译成 letrec 开新作用域, 所以这里不用派生
-                begin(interp, bodys, letE, K, false);
-            } else {
-                //noinspection unchecked
-                List<Symbol> ids = ((List<Symbol>) car(idss));
-                Object val = car(vals);
-                // 1. 先求值
-                interp.interp1(val, E, x -> {
-                    PList values = values(x);
-                    expect(values.size() == ids.size(), "arity mismatch");
-                    // 2. 开新环境(这里每次都新环境,是为了处理👆call/cc的 case)
-                    // 每次开新环境实际是 let* 的语义
-                    // (let-values ([(a) 1] [(a) 2]) )
-                    // (let-values ([(a) 1] [(b) a]) )
-                    // 上面 case 靠宏展开的作用域检查来避免
-                    Env newLetE = letE.derive();
-                    // 3. 再 define
-                    defines(ids, values, newLetE, void1 -> {
-                        letValues(((PList) cdr(idss)), ((PList) cdr(vals)), bodys, E, newLetE, K);
-                    });
-                });
-            }
-        }
+            // 原因: https://www.zhihu.com/question/297207095/answer/509225101
+            // "Another restriction is that the continuation of each <init> should not be invoked more than once."
+            // 不是说在 let 的 <init> 位置用 call/cc 不对，而是说即使是用了，continuation 也是从绑定完成后才开始，
+            // 而不是如一般的从 (call/cc ...) 出现的位置开始。是不该再多调用超过一次，而不是不该调用。
+            // (assert-equals true
+            //  (let ((x (call/cc list)))
+            //    (if (pair? x)
+            //      ;; 在求值完绑定右值之后在派生新环境
+            //      ;; bind(x  to  (lambda () x in E1)  in  E2)
+            //      ;; (pair? (x))  => true, x 是 旧环境 的 (list k)
+            //      ;; letrec 则是一直在同一个环境, set! x 把 x 改成 (lambda ...) 了
+            //      ((car x) (lambda () x))
+            //      (pair? (x)))))
+            //
+            //(assert-equals false
+            //  (letrec ((x (call/cc list)))
+            //    (if (pair? x)
+            //      ((car x) (lambda () x))
+            //      (pair? (x)))
+            //  ))
 
-        void letValues1(PList idss, PList vals, PList bodys, Env E, Ctx K) {
-            interp.interpN(vals.toArray(), E, x -> {
+            // 所以, 逻辑上 K 内外执行都一样的逻辑, 因为 K 会被重复执行, 都会造成差异
+
+            // Env letE = E.derive();
+            Interp.interpN(vals.toArray(), E, x -> {
                 Env letE = E.derive();
                 Object[] xs = (Object[]) x;
                 for (int i = 0; i < xs.length; i++) {
@@ -460,31 +277,8 @@ public interface Syntaxes {
                     expect(values.size() == ids.size(), "arity mismatch");
                     defines(ids, values, letE);
                 }
-                begin(interp, bodys, letE.derive(), K, false);
+                begin(bodys, letE.derive(), K, false);
             });
-        }
-
-        void letrecValues(PList idss, PList vals, PList bodys, Env letE, Ctx K) {
-            if (isNull(vals)) {
-                begin(interp, bodys, letE, K, false);
-            } else {
-                //noinspection unchecked
-                List<Symbol> ids = ((List<Symbol>) car(idss));
-                Object val = car(vals);
-                    // 1. 先 define #f
-                    for (Symbol id : ids) {
-                        define(id, false, letE);
-                    }
-                // 2. 再求值
-                interp.interp1(val, letE, x -> {
-                    PList values = values(x);
-                    expect(values.size() == ids.size(), "arity mismatch");
-                    // 3. 再赋值
-                    setIds(ids, values, letE, void1 -> {
-                        letrecValues(((PList) cdr(idss)), ((PList) cdr(vals)), bodys, letE, K);
-                    });
-                });
-            }
         }
 
         @Override
@@ -493,72 +287,47 @@ public interface Syntaxes {
         }
     }
 
-    //////////////////////////////////////////////////////////////////////////////////////////
-
-    // (define id expr)
-    // (define (id formals ...) body ...+)  ==> (define id (lambda (formals ...) body ...)
-    // (define (id . formal) body ...+) ==> (define id (lambda formal body ...)
-    class Define implements Syntax {
-        final Interp interp;
-
-        Define(Interp interp) {
-            this.interp = interp;
-        }
-
+    class LetrecValues implements Syntax {
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
-            String sig = "(define id expr) or (define (id formals ...) body ...+)";
-            expect(forms.length >= 2, sig);
-            if (forms[0] instanceof Symbol) {
-                bindExpr(forms, E, K);
-            } else if (forms[0] instanceof PList) {
-                bindProcedure(forms, E, K);
-            } else {
-                throw new InterpError(sig);
-            }
-
-            // 这里应该是个性能热点, 不用 try 来判断了
-            // String sig = "(define (id formals ...) body ...+)";
-            // Finder r = tryMatch(sig, forms);
-            // if (r == null) { } else { }
+            Finder r = match("(letrec-values ([(id ...) val] ...) body ...+)", forms);
+            PList idss = r.get("id"); // List<List<Symbol>>
+            PList vals = r.get("val");
+            PList bodys = r.get("body");
+            Env letE = E.derive();
+            letrecValues(idss, vals, bodys, letE, K);
         }
 
-        // (define id expr)
-        void bindExpr(Object[] forms, Env E, Ctx K) {
-            String signature = "(define id expr)";
-            Finder r = match(signature, forms);
-            Object id = r.get("id");
-            expect(id instanceof Symbol, signature);
-            Object expr = r.get("expr");
-            interp.interp1(expr, E, val -> define(((Symbol) id), val, E, K));
-        }
-
-        // (define (id . formal) body ...+) ==> (define id (lambda formal body ...)
-        // (define (id formals ...) body ...+)  ==> (define id (lambda (formals ...) body ...)
-        void bindProcedure(Object[] forms, Env E, Ctx K) {
-            String signature = "(define (id formals ...) body ...+)";
-            Finder r = match(signature, forms);
-            Object id = r.get("id");
-            expect(id instanceof Symbol, signature);
-            List<Object> formals = r.get("formals");
-            List<Object> body = r.get("body");
-
-            Closure c;
-            boolean isRestId = formals.size() == 2 && formals.get(0).equals(sym(DOT));
-            if (isRestId) {
-                Object restId = formals.get(1);
-                c = makeClosure(interp, restId, body, E, signature);
+        void letrecValues(PList idss, PList vals, PList bodys, Env letE, Ctx K) {
+            if (RT.isNull(vals)) {
+                begin(bodys, letE, K, false);
             } else {
-                c = makeClosure(interp, listColl(formals), body, E, signature);
+                //noinspection unchecked
+                List<Symbol> ids = ((List<Symbol>) RT.car(idss));
+                Object val = RT.car(vals);
+                // 1. 先 define #f
+                for (Symbol id : ids) {
+                    define(id, false, letE);
+                }
+                // 2. 再求值
+                Interp.interp1(val, letE, x -> {
+                    PList values = values(x);
+                    expect(values.size() == ids.size(), "arity mismatch");
+                    // 3. 再赋值
+                    setIds(ids, values, letE, void1 -> {
+                        letrecValues(((PList) RT.cdr(idss)), ((PList) RT.cdr(vals)), bodys, letE, K);
+                    });
+                });
             }
-            define(((Symbol) id), c, E, K);
         }
 
         @Override
         public String toString() {
-            return "#<syntax:" + DEFINE + ">";
+            return "#<syntax:" + LETREC_VALUES + ">";
         }
     }
+
+    //////////////////////////////////////////////////////////////////////////////////////////
 
     static void define(Symbol id, Object val, Env E) {
         String name = id.name;
@@ -625,34 +394,37 @@ public interface Syntaxes {
 
     // 注意: body 多表达式原来是在 stdlib 用宏支持的
     // 现在这里添加 begin, 也需要 stdlib 的 begin 来支持
-    static Closure makeClosure(Interp interp, Object formals, List<Object> body, Env E, String msg) {
+    static Closure makeClosure(Object formals, List<Object> body, Env E, String msg) {
         if (formals instanceof PList) {
             List<Object> formal = ((PList) formals);
             int sz = formal.size();
             List<Symbol> params = new ArrayList<>(sz);
 
-            boolean var = false;
-            for (int i = 0; i < sz; i++) {
-                Object n = formal.get(i);
-                expect(n instanceof Symbol, msg + ", 期望 Name, 实际 " + n);
-                Symbol param = (Symbol) n;
-                if (param.name.equals(DOT)) {
-                    expect( !var && i != 0 && i == sz - 2, msg); // 必须倒数第二个
-                    var = true;
-                    continue;
-                }
-                if (!var) {
-                    params.add(param);
-                }
+            for (Object n : formal) {
+                expect(n instanceof Symbol, msg + ", 期望 Symbol, 实际 " + n);
+                params.add((Symbol) n);
             }
 
-            Symbol rest = var ? (Symbol) formal.get(sz - 1) : null;
+            checkDup(params, null);
+            return new Closure(E, params, null, beginOf(body));
+        } else if (formals instanceof Pair) {
+            List<Symbol> params = new ArrayList<>();
+            Object d = formals;
+            while (isPair(d)) {
+                Object a = car(d);
+                expect(a instanceof Symbol, msg + ", 期望 Symbol, 实际 " + a);
+                params.add(((Symbol) a));
+                d = cdr(d);
+            }
+            expect(d instanceof Symbol, msg + ", 期望 Symbol, 实际 " + d);
+            Symbol rest = ((Symbol) d);
+
             checkDup(params, rest);
-            return new Closure(interp, E, params, rest, beginOf(body));
+            return new Closure(E, params, rest, beginOf(body));
         } else if (formals instanceof Symbol) {
             // rest-id
             Symbol restId = (Symbol) formals;
-            return new Closure(interp, E, new ArrayList<>(0), restId, beginOf(body));
+            return new Closure(E, new ArrayList<>(0), restId, beginOf(body));
         } else {
             throw new InterpError(msg);
         }
@@ -676,14 +448,7 @@ public interface Syntaxes {
     // 	 	   |	rest-id
     // todo 可以用 case-lambda + letrec 实现 lambda
     // https://www.cs.utah.edu/plt/publications/scheme09-fb.pdf
-    // todo 用 keyword 实现可选命名参数
     class Lambda implements Syntax {
-        final Interp interp;
-
-        Lambda(Interp interp) {
-            this.interp = interp;
-        }
-
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
             String signature = "(lambda formals body ...+)";
@@ -691,7 +456,7 @@ public interface Syntaxes {
             Object formals = r.get("formals");
             List<Object> body = r.get("body");
             String msg = "语法错误: " + signature;
-            K.apply(makeClosure(interp, formals, body, E, msg));
+            K.apply(makeClosure(formals, body, E, msg));
         }
 
         @Override
@@ -705,12 +470,6 @@ public interface Syntaxes {
     // 	 	| (id ...+ . rest-id)
     // 	 	| rest-id
     class CaseLambda implements Syntax {
-        final Interp interp;
-
-        CaseLambda(Interp interp) {
-            this.interp = interp;
-        }
-
         static class Case {
             // 负数表示至少, max 表示任意
             final static int rest = Integer.MAX_VALUE;
@@ -764,7 +523,7 @@ public interface Syntaxes {
                 Object formals = formalss.get(i);
                 List<Object> body = bodys.get(i);
                 int argCnt = argCount(formals);
-                Closure c = makeClosure(interp, formals, body, E, signature);
+                Closure c = makeClosure(formals, body, E, signature);
                 // 按照语义匹配第一个, argCnt 相同默认覆盖好了
                 cases[i] = new Case(argCnt, c);
             }
@@ -776,15 +535,15 @@ public interface Syntaxes {
             if (formals instanceof Symbol) {
                 return Case.rest;
             } else if (formals instanceof PList) {
+                return ((PList) formals).size();
+            } else if (formals instanceof Pair) {
                 int cnt = 0;
-                for (Object el : ((PList) formals)) {
-                    if (el.equals(sym(DOT))) {
-                        return -cnt; // 至少 cnt 个
-                    } else {
-                        cnt++;
-                    }
+                Object d = formals;
+                while (isPair(d)) {
+                    cnt++;
+                    d = cdr(d);
                 }
-                return cnt;
+                return -cnt;
             } else {
                 return 0;
             }
@@ -800,21 +559,15 @@ public interface Syntaxes {
 
     // todo 用健康宏实现!!!
     class New implements Syntax {
-        final Interp interp;
-
-        New(Interp interp) {
-            this.interp = interp;
-        }
-
         // todo test
         @Override
         public void call(Object[] args, Env E, Ctx K) {
-            Finder r = tryMatch("(new id:class args ...)", args);
-            if (r == null) {
-                newInterfaces(args, E, K);
-            } else {
+//            Finder r = tryMatch("(new id:class args ...)", args);
+//            if (r == null) {
+//                newInterfaces(args, E, K);
+//            } else {
                 newClass(args, E, K);
-            }
+//            }
         }
 
         void newClass(Object[] args, Env E, Ctx K) {
@@ -822,39 +575,39 @@ public interface Syntaxes {
             Symbol clsSym = r.get("id:class");
             List<Object> argForms = r.get("args");
             Class<?> cls = Misc.classOf(clsSym.name);
-            if (cls.isInterface()) {
-                expect(argForms.size() == 1, "arity mismatch");
-                newInterfaces1(new Class<?>[] { cls }, argForms.get(0), E, K);
-            } else {
+//            if (cls.isInterface()) {
+//                expect(argForms.size() == 1, "arity mismatch");
+//                newInterfaces1(new Class<?>[] { cls }, argForms.get(0), E, K);
+//            } else {
                 CallSite ctor = CallSite.constructor(cls);
-                interp.interpN(argForms.toArray(), E, argVals -> {
+                Interp.interpN(argForms.toArray(), E, argVals -> {
                     K.apply(ctor.newInstance(((Object[]) argVals)));
                 });
-            }
+//            }
         }
 
-        // todo test ...
-        void newInterfaces(Object[] args, Env E, Ctx K) {
-            Finder r = match("(new (id:interfaces ...+) map-string-to-lambda-expr)", args);
-            List<Symbol> ifaceSyms = r.get("id:interfaces");
-            Class<?>[] ifaces = ifaceSyms.stream().map(it -> Misc.classOf(it.name)).toArray(Class[]::new);
-
-            Object map = r.get("map-string-to-lambda-expr");
-            newInterfaces1(ifaces, map, E, K);
-        }
-
-        void newInterfaces1(Class<?>[] ifaces, Object methodMap, Env E, Ctx K) {
-            interp.interp1(methodMap, E, methods -> {
-                expect(methods instanceof Map, "contract violation");
-                ((Map<?, ?>) methods).forEach((k, v) -> {
-                    expect(k instanceof String, "contract violation");
-                    expect(v instanceof Procedure, "contract violation");
-                });
-
-                //noinspection unchecked
-                K.apply(Experimental.proxy(ifaces, ((Map<String, Procedure>) methods), E));
-            });
-        }
+//        // todo test ...
+//        void newInterfaces(Object[] args, Env E, Ctx K) {
+//            Finder r = match("(new (id:interfaces ...+) map-string-to-lambda-expr)", args);
+//            List<Symbol> ifaceSyms = r.get("id:interfaces");
+//            Class<?>[] ifaces = ifaceSyms.stream().map(it -> Misc.classOf(it.name)).toArray(Class[]::new);
+//
+//            Object map = r.get("map-string-to-lambda-expr");
+//            newInterfaces1(ifaces, map, E, K);
+//        }
+//
+//        void newInterfaces1(Class<?>[] ifaces, Object methodMap, Env E, Ctx K) {
+//            Interp.interp1(methodMap, E, methods -> {
+//                expect(methods instanceof Map, "contract violation");
+//                ((Map<?, ?>) methods).forEach((k, v) -> {
+//                    expect(k instanceof String, "contract violation");
+//                    expect(v instanceof Procedure, "contract violation");
+//                });
+//
+//                //noinspection unchecked
+//                K.apply(Experimental.proxy(ifaces, ((Map<String, Procedure>) methods), E));
+//            });
+//        }
 
         @Override
         public String toString() {
@@ -864,11 +617,6 @@ public interface Syntaxes {
 
     // member access operator
     class MemberAccessor implements Syntax {
-        final Interp interp;
-
-        MemberAccessor(Interp interp) {
-            this.interp = interp;
-        }
 
         @Override
         public void call(Object[] forms, Env E, Ctx K) {
@@ -877,13 +625,13 @@ public interface Syntaxes {
                 // 静态成员访问
                 String className = ((Symbol) forms[0]).name;
                 JavaAccessor resolved = resolve(Misc.classOf(className), null, forms);
-                resolved.access(interp, E, K);
+                resolved.access(E, K);
             } else {
                 // 实例成员访问
-                interp.interp1(forms[0], E, instance -> {
+                Interp.interp1(forms[0], E, instance -> {
                     expect(instance != null, "方法 receiver 为 null");
                     JavaAccessor resolved = resolve(instance.getClass(), instance, forms);
-                    resolved.access(interp, E, K);
+                    resolved.access(E, K);
                 });
             }
         }
@@ -902,26 +650,22 @@ public interface Syntaxes {
             return false;
         }
 
+        // clojure 语法
+        // 第一个操作数是 JavaName 则带是静态成员访问, 否则是实例成员访问
+        //
+        // 第二个操作数是 Symbol 且没有参数
+        // 除非有无参公开方法, 否则是字段访问
+        // 如果第二个操作数 Symbol 以-开头, 只会解析成字段访问
+        //
+        // 如果第二个操作数是 PList, 则是方法调用, PList 第一个元素是方法名称的 Symbol, 也可以展开
+        //
+        // (. instance-expr member-symbol)
+        // (. ClassName-symbol member-symbol)
+        // (. instance-expr -field-symbol)
+        // (. instance-expr (method-symbol args ...)) or (. instance-expr method-symbol args ...)
+        // (. ClassName-symbol (method-symbol args ...)) or (. ClassName-symbol method-symbol args ...)
         JavaAccessor resolve(Class<?> klass, Object instance, Object[] forms) {
-            /*
-            clojure 语法
-            第一个操作数是 JavaName 则带是静态成员访问, 否则是实例成员访问
-
-            第二个操作数是 Symbol 且没有参数
-            除非有无参公开方法, 否则是字段访问
-            如果第二个操作数 Symbol 以-开头, 只会解析成字段访问
-
-            如果第二个操作数是 PList, 则是方法调用, PList 第一个元素是方法名称的 Symbol, 也可以展开
-
-            (. instance-expr member-symbol)
-            (. ClassName-symbol member-symbol)
-            (. instance-expr -field-symbol)
-            (. instance-expr (method-symbol args ...)) or (. instance-expr method-symbol args ...)
-            (. ClassName-symbol (method-symbol args ...)) or (. ClassName-symbol method-symbol args ...)
-             */
-
             String msg = "DOT 语法错误";
-
             Object member;
             String methodName = null;
             String fieldName = null;
@@ -931,9 +675,9 @@ public interface Syntaxes {
                 expect(forms.length == 2, msg);
                 PList lst = (PList) forms[1];
                 expect(lst.size() >= 1, msg);
-                member = car(lst);
+                member = RT.car(lst);
                 expect(member instanceof Symbol, msg);
-                argForms = ((PList) cdr(lst)).toArray();
+                argForms = ((PList) RT.cdr(lst)).toArray();
                 methodName = ((Symbol) member).name;
             } else {
                 member = forms[1];
@@ -987,73 +731,12 @@ public interface Syntaxes {
         }
     }
 
-    //////////////////////////////////////////////////////////////////////////////////////////
-
-    class SyntacticClosure implements Syntax {
-        final Interp interp;
-        final Macro macro;
-
-        SyntacticClosure(Interp interp, Macro macro) {
-            this.interp = interp;
-            this.macro = macro;
-        }
-
-        @Override
-        public void call(Object[] forms, Env E, Ctx K) {
-            Macro.Expansion expansion = macro.matchAndExpand(forms, E);
-
-            // 这里貌似不能用 derive 作用域, e.g. 假设宏内部有 define,
-            // define的变量就不在原来的作用域, 脑补成展开代码的语义即可
-            Object expr = Reader.read(expansion.expression);
-
-            Env callingScope = expansion.callingScope/*==E*/;
-            interp.interp1(expr, callingScope, K);
-        }
-
-        @Override
-        public String toString() {
-            return "#<syntactic-closure>";
-        }
-    }
-
-    class SyntaxRules implements Syntax {
-        final Interp interp;
-
-        SyntaxRules(Interp interp) {
-            this.interp = interp;
-        }
-
-        @Override
-        public void call(Object[] forms, Env E, Ctx K) {
-            String signature = "(syntax-rules (literal-id ...) [(id pattern ...) template] ...)";
-            Finder r = match(signature, forms);
-            List<Symbol> formals = r.get("literal-id");
-            List<List<Object>> patterns = r.get("pattern");
-            List<Object> templates = r.get("template");
-
-            List<Macro.Rule> rules = new ArrayList<>(patterns.size());
-            for (int i = 0; i < patterns.size(); i++) {
-                List<Object> pattern = patterns.get(i);
-                Object template = templates.get(i);
-                rules.add(new Macro.Rule(listColl(pattern), template));
-            }
-
-            Macro macro = new Macro(E, formals, rules);
-            K.apply(new SyntacticClosure(interp, macro));
-        }
-
-        @Override
-        public String toString() {
-            return "#<syntax:" + SYNTAX_RULES + ">";
-        }
-    }
-
     // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 
     static Finder match(String pattern, String[] formals, Object[] argForms) {
-        PList input = list(
-                sym("_"),
-                splice(argForms)
+        PList input = RT.list(
+                RT.sym("_"),
+                RT.splice(argForms)
         );
         return Pattern.ofStr(pattern, formals).match(input);
     }
@@ -1074,11 +757,15 @@ public interface Syntaxes {
         return tryMatch(pattern, new String[0], argForms);
     }
 
+    static Object letValues(List<Object> forms) {
+        return list(sym("let-values"), list(), forms);
+    }
+
     static Object beginOf(List<Object> forms) {
         if (forms.size() == 1) {
             return forms.get(0);
         } else {
-            return list(sym(BEGIN), splice(forms));
+            return RT.list(RT.sym(BEGIN), RT.splice(forms));
         }
     }
 }

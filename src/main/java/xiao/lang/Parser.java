@@ -3,12 +3,14 @@ package xiao.lang;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static java.lang.Character.isDigit;
 import static java.lang.Character.isWhitespace;
 import static xiao.lang.Contract.expect;
 import static xiao.lang.Misc.Nullable;
-import static xiao.lang.Procedures.*;
+import static xiao.lang.Values.*;
 import static xiao.lang.Values.Symbol;
 
 /**
@@ -16,8 +18,8 @@ import static xiao.lang.Values.Symbol;
  */
 public class Parser {
 
-    public static List<Object> parse(String input) {
-        return new Parser(input).parse();
+    public static List<Object> parse(String s) {
+        return new Parser(s).parse();
     }
 
     public static Object parse1(String s) {
@@ -26,20 +28,44 @@ public class Parser {
         return ns.get(0);
     }
 
+
+
     final static String LINE_COMMENT = ";";
 
+    final static String SYNTAX = "#'";
+    final static String QUASI_SYNTAX = "#`";
+    final static String SHARP_TUPLE_BEGIN = "#(";
+    final static String SHARP_VECTOR_BEGIN = "#[";
     final static String TUPLE_BEGIN = "(";
     final static String TUPLE_END = ")";
     final static String VECTOR_BEGIN = "[";
     final static String VECTOR_END = "]";
 
+    final static String CHAR = "#\\";
     final static String QUOTE = "'";
     final static String UNQUOTE = ",";
     final static String UNQUOTE_SPLICING = ",@";
     final static String QUASIQUOTE = "`";
-    // . 用来处理 跟 java 交互, 要处理能 Name
-    // final static String DOT = ".";
 
+    final static Map<String, Character> charNames = new HashMap<>();
+    static {
+        charNames.put("nul", (char) Integer.parseInt("0000", 16));
+        charNames.put("alarm", (char) Integer.parseInt("0007", 16));
+        charNames.put("backspace", (char) Integer.parseInt("0008", 16));
+        charNames.put("tab", (char) Integer.parseInt("0009", 16));
+        charNames.put("linefeed", (char) Integer.parseInt("000A", 16));
+        charNames.put("newline", (char) Integer.parseInt("000A", 16));
+        charNames.put("vtab", (char) Integer.parseInt("000B", 16));
+        charNames.put("page", (char) Integer.parseInt("000C", 16));
+        charNames.put("return", (char) Integer.parseInt("000D", 16));
+        charNames.put("esc", (char) Integer.parseInt("001B", 16));
+        charNames.put("space", (char) Integer.parseInt("0020", 16));
+        charNames.put("delete", (char) Integer.parseInt("007F", 16));
+    }
+
+
+
+    final Pattern charPattern;
 
     final Set<String> delimiters = new HashSet<>();
     final Map<String, String> delimiterMap = new HashMap<>();
@@ -50,14 +76,129 @@ public class Parser {
     public Parser(String input) {
         this.input = input;
 
+        addDelimiterPair(SHARP_TUPLE_BEGIN, TUPLE_END);
+        addDelimiterPair(SHARP_VECTOR_BEGIN, VECTOR_END);
         addDelimiterPair(TUPLE_BEGIN, TUPLE_END);
         addDelimiterPair(VECTOR_BEGIN, VECTOR_END);
 
+        addDelimiter(SYNTAX);
+        addDelimiter(CHAR);
         addDelimiter(QUOTE);
         addDelimiter(UNQUOTE);
         addDelimiter(UNQUOTE_SPLICING);
         addDelimiter(QUASIQUOTE);
-        // addDelimiter(DOT);
+
+        charPattern = buildCharPattern();
+    }
+
+    Pattern buildCharPattern() {
+        StringJoiner cns = new StringJoiner(")|(?:", "(?:", ")");
+        for (String cn : charNames.keySet()) {
+            cns.add(cn);
+        }
+        StringJoiner delis = new StringJoiner(")|(", "$|\\s|\\r|\\n|" + LINE_COMMENT + "|(?:", ")");
+        for (String del : delimiters) {
+            delis.add(java.util.regex.Pattern.quote(del));
+        }
+        //noinspection RegExpUnnecessaryNonCapturingGroup
+        return Pattern.compile("((?:" + cns + ")|(?:x[a-fA-F0-9]+)|.)(?=" + delis + ")");
+    }
+
+    void addDelimiterPair(String open, String close) {
+        delimiters.add(open);
+        delimiters.add(close);
+        delimiterMap.put(open, close);
+    }
+
+    void addDelimiter(String delim) {
+        delimiters.add(delim);
+    }
+
+    @Nullable String isDelimiter() {
+        String delimiter = null;
+        for (String del : delimiters) {
+            if (input.startsWith(del, offset)) {
+                if (delimiter == null) {
+                    delimiter = del;
+                } else {
+                    if (del.length() > delimiter.length()) {
+                        delimiter = del;
+                    }
+                }
+            }
+        }
+        return delimiter;
+    }
+
+    boolean isDelimiter(char c) {
+        return delimiters.contains(Character.toString(c));
+    }
+
+    boolean isOpen(Object c) {
+        if (c instanceof Delimiter) {
+            return delimiterMap.containsKey(((Delimiter) c).shape);
+        } else {
+            return false;
+        }
+    }
+
+    boolean isClose(Object c) {
+        if (c instanceof Delimiter) {
+            return delimiterMap.containsValue(((Delimiter) c).shape);
+        } else {
+            return false;
+        }
+    }
+
+    boolean matchDelimiter(Object open, Object close) {
+        return (open instanceof Delimiter &&
+                close instanceof Delimiter &&
+                matchString(
+                        ((Delimiter) open).shape,
+                        ((Delimiter) close).shape
+                )
+        );
+    }
+
+    boolean matchString(String open, String close) {
+        String matched = delimiterMap.get(open);
+        return matched != null && matched.equals(close);
+    }
+
+    @Nullable
+    Symbol isSyntax(Object n) {
+        if (n instanceof Delimiter) {
+            if (((Delimiter) n).shape.equals(SYNTAX)) {
+                return RT.sym(Names.SYNTAX);
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    Symbol isQuotation(Object n) {
+        if (n instanceof Delimiter) {
+            String s = ((Delimiter) n).shape;
+            switch (s) {
+                case QUOTE:
+                    return RT.sym(Names.QUOTE);
+                case QUASIQUOTE:
+                    return RT.sym(Names.QUASIQUOTE);
+                case UNQUOTE:
+                    return RT.sym(Names.UNQUOTE);
+                case UNQUOTE_SPLICING:
+                    return RT.sym(Names.UNQUOTE_SPLICING);
+            }
+        }
+        return null;
+    }
+
+    boolean isCharPrefix(Object n) {
+        if (n instanceof Delimiter) {
+            String s = ((Delimiter) n).shape;
+            return s.equals(CHAR);
+        }
+        return false;
     }
 
     public List<Object> parse() {
@@ -67,7 +208,7 @@ public class Parser {
             els.add(s);
             s = nextSexp();
         }
-        return listColl(els);
+        return els;
     }
 
     Object nextSexp() {
@@ -97,11 +238,37 @@ public class Parser {
                     iter = nextNode(depth + 1);
                 }
             }
-            return listColl(els);
+            String del = ((Delimiter) tok).shape;
+            if (del.equals(SHARP_TUPLE_BEGIN) || del.equals(SHARP_VECTOR_BEGIN)) {
+                // vector 字面量
+                return els.toArray();
+            } else {
+                return RT.listColl(els);
+            }
         } else if ((quote = isQuotation(tok)) != null) {
-            return list(quote, nextNode(depth));
+            return RT.list(quote, nextNode(depth));
+        } else if ((quote = isSyntax(tok)) != null) {
+            return RT.list(quote, nextNode(depth));
+        } else if (isCharPrefix(tok)) {
+            return readChar();
         } else {
             return tok;
+        }
+    }
+
+    char readChar() {
+        Matcher matcher = charPattern.matcher(input.substring(offset));
+        expect(matcher.lookingAt(), "错误的 char 格式");
+        String s = input.substring(offset, matcher.end() + offset);
+        offset += matcher.end();
+        if (s.length() == 1) {
+            return s.charAt(0);
+        } else if (charNames.containsKey(s)) {
+            return charNames.get(s);
+        } else if (s.startsWith("x")) {
+            return (char) Integer.parseInt(s.substring(1), 16);
+        } else {
+            throw new InterpError("错误的 char 格式");
         }
     }
 
@@ -112,25 +279,17 @@ public class Parser {
             return null;
         }
 
-        char cur = input.charAt(offset);
-        if (isDelimiter(cur)) {
-            offset++;
-
-            // 特殊处理 UNQUOTE_SPLICING
-            if ((cur + "").equals(UNQUOTE)) {
-                if (offset >= input.length()) {
-                    throw new InterpError("EOF");
-                }
-                char nxt = input.charAt(offset);
-                if ((cur + "" + nxt).equals(UNQUOTE_SPLICING)) {
-                    offset++;
-                    return new Delimiter(UNQUOTE_SPLICING);
-                }
-            }
-
-            return new Delimiter(cur + "");
+        String del = isDelimiter();
+        if (del != null) {
+            offset += del.length();
+            return new Delimiter(del);
         }
 
+        if (offset >= input.length()) {
+            return null;
+        }
+
+        char cur = input.charAt(offset);
         if (input.charAt(offset) == '"' && (offset == 0 || input.charAt(offset - 1) != '\\')) {
             int start = offset;
             offset++; // skip "
@@ -233,6 +392,7 @@ public class Parser {
                 }
             } else {
                 String content = input.substring(start, offset);
+                // 这里 Integer 溢出会用 Double 表示
                 try {
                     // Int-Value
                     return parseNum(content, Integer.class);
@@ -262,9 +422,9 @@ public class Parser {
             return false; // Bool-Value
         } else {
             if (name.startsWith(Names.KEYWORD_PREFIX)) {
-                return keyword(name); // Keyword-Value
+                return RT.keyword(name); // Keyword-Value
             } else {
-                return sym(name); // Symbol-Value
+                return RT.sym(name); // Symbol-Value
             }
         }
     }
@@ -323,69 +483,6 @@ public class Parser {
         } else {
             throw new UnsupportedOperationException();
         }
-    }
-
-    void addDelimiterPair(String open, String close) {
-        delimiters.add(open);
-        delimiters.add(close);
-        delimiterMap.put(open, close);
-    }
-
-    void addDelimiter(String delim) {
-        delimiters.add(delim);
-    }
-
-    boolean isDelimiter(char c) {
-        return delimiters.contains(Character.toString(c));
-    }
-
-    @Nullable
-    Symbol isQuotation(Object n) {
-        if (n instanceof Delimiter) {
-            String s = ((Delimiter) n).shape;
-            switch (s) {
-                case QUOTE:
-                    return sym(Names.QUOTE);
-                case QUASIQUOTE:
-                    return sym(Names.QUASIQUOTE);
-                case UNQUOTE:
-                    return sym(Names.UNQUOTE);
-                case UNQUOTE_SPLICING:
-                    return sym(Names.UNQUOTE_SPLICING);
-            }
-        }
-        return null;
-    }
-
-    boolean isOpen(Object c) {
-        if (c instanceof Delimiter) {
-            return delimiterMap.containsKey(((Delimiter) c).shape);
-        } else {
-            return false;
-        }
-    }
-
-    boolean isClose(Object c) {
-        if (c instanceof Delimiter) {
-            return delimiterMap.containsValue(((Delimiter) c).shape);
-        } else {
-            return false;
-        }
-    }
-
-    boolean matchDelimiter(Object open, Object close) {
-        return (open instanceof Delimiter &&
-                close instanceof Delimiter &&
-                matchString(
-                        ((Delimiter) open).shape,
-                        ((Delimiter) close).shape
-                )
-        );
-    }
-
-    boolean matchString(String open, String close) {
-        String matched = delimiterMap.get(open);
-        return matched != null && matched.equals(close);
     }
 
     /**

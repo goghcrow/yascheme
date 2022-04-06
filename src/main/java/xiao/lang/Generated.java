@@ -41,6 +41,8 @@ public class Generated {
             if (dstType.equals("char")) {
                 continue;
             }
+
+
             String methodName = dstType.substring(0, 1).toUpperCase() + dstType.substring(1);
             if (dstType.startsWith("Big")) {
                 System.out.printf("public static %s castTo%s(%s x) { return new %s(x); }\n",
@@ -55,7 +57,7 @@ public class Generated {
                         methodName,
                         srcType,
                         numTypes1[i],
-                        numTypes1[i]
+                        numTypes1[i].equals("Integer") ? "Int" : numTypes1[i]
                 );
             }
         }
@@ -79,6 +81,10 @@ public class Generated {
                 }
 
                 if (srcType.startsWith("Big") && !dstType.startsWith("Big")) {
+                    // big -> char
+                    if (dstType.equals("char")) {
+                        continue;
+                    }
                     // big -> primitive
                     System.out.printf("public static %s castTo%s(%s x) { return x.%sValue(); }\n",
                             dstType,
@@ -143,7 +149,7 @@ public class Generated {
                 { "eq", "boolean", "==", "equals" },
                 { "lt", "boolean", "<", "compareTo", "< 0" },
                 { "gt", "boolean", ">", "compareTo", "> 0" },
-                { "modulo", "Number", "%", "remainder"},
+                { "remainder", "Number", "%", "remainder"},
         };
 
 
@@ -154,6 +160,9 @@ public class Generated {
             boolean isCmp = "lt".equals(method) || "gt".equals(method);
             for (String pType1 : numTypes) {
                 for (String pType2 : numTypes) {
+                    boolean pType1Fix = pType1.equals("byte") || pType1.equals("short") || pType1.equals("int") || pType1.equals("long");
+                    boolean pType2Fix = pType2.equals("byte") || pType2.equals("short") || pType2.equals("int") || pType2.equals("long");
+
                     if (pType1.startsWith("Big") && pType2.startsWith("Big")) {
                         String bigMethod = signature[3];
                         if (pType1.equals(pType2)) {
@@ -204,6 +213,15 @@ public class Generated {
                             System.out.printf("public static %s %s(%s x, %s y) { return new %s(String.valueOf(x)).%s(y); }\n",
                                     rType, method, pType1, pType2, pType2, bigMethod);
                         }
+                    } else if (method.equals("div") && pType1Fix && pType2Fix) {
+                        // !!!! 注意这里跟 java 的语义不一样
+                        System.out.printf(
+                                "public static %s %s(%s x, %s y) { if (x %% y == 0) { return x %s y; } else { return (double)x %s (double)y; } }\n",
+                                rType, method, pType1, pType2, operator, operator);
+                    } else if (method.equals("eq") && pType1.equals("float") && pType2.equals("float")) {
+                        System.out.printf("public static %s %s(%s x, %s y) { return Float.compare(x, y) == 0; }\n", rType, method, pType1, pType2);
+                    } else if (method.equals("eq") && pType1.equals("double") && pType2.equals("double")) {
+                        System.out.printf("public static %s %s(%s x, %s y) { return Double.compare(x, y) == 0; }\n", rType, method, pType1, pType2);
                     } else {
                         System.out.printf("public static %s %s(%s x, %s y) { return x %s y; }\n", rType, method, pType1, pType2, operator);
                     }
@@ -300,8 +318,6 @@ public class Generated {
     public static double castToDouble(BigDecimal x) { return x.doubleValue(); }
     public static BigInteger castToBigInteger(BigDecimal x) { return x.toBigInteger(); }
     public static BigDecimal castToBigDecimal(BigDecimal x) { return x; }
-
-
     public static Number add(byte x, byte y) { return x + y; }
     public static Number add(byte x, short y) { return x + y; }
     public static Number add(byte x, int y) { return x + y; }
@@ -494,34 +510,34 @@ public class Generated {
     public static Number mul(BigDecimal x, double y) { return x.multiply(new BigDecimal(String.valueOf(y))); }
     public static Number mul(BigDecimal x, BigInteger y) { return x.multiply(new BigDecimal(String.valueOf(y))); }
     public static Number mul(BigDecimal x, BigDecimal y) { return x.multiply(y); }
-    public static Number div(byte x, byte y) { return x / y; }
-    public static Number div(byte x, short y) { return x / y; }
-    public static Number div(byte x, int y) { return x / y; }
-    public static Number div(byte x, long y) { return x / y; }
+    public static Number div(byte x, byte y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(byte x, short y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(byte x, int y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(byte x, long y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
     public static Number div(byte x, float y) { return x / y; }
     public static Number div(byte x, double y) { return x / y; }
     public static Number div(byte x, BigInteger y) { return new BigInteger(String.valueOf(x)).divide(y); }
     public static Number div(byte x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).divide(y); }
-    public static Number div(short x, byte y) { return x / y; }
-    public static Number div(short x, short y) { return x / y; }
-    public static Number div(short x, int y) { return x / y; }
-    public static Number div(short x, long y) { return x / y; }
+    public static Number div(short x, byte y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(short x, short y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(short x, int y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(short x, long y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
     public static Number div(short x, float y) { return x / y; }
     public static Number div(short x, double y) { return x / y; }
     public static Number div(short x, BigInteger y) { return new BigInteger(String.valueOf(x)).divide(y); }
     public static Number div(short x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).divide(y); }
-    public static Number div(int x, byte y) { return x / y; }
-    public static Number div(int x, short y) { return x / y; }
-    public static Number div(int x, int y) { return x / y; }
-    public static Number div(int x, long y) { return x / y; }
+    public static Number div(int x, byte y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(int x, short y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(int x, int y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(int x, long y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
     public static Number div(int x, float y) { return x / y; }
     public static Number div(int x, double y) { return x / y; }
     public static Number div(int x, BigInteger y) { return new BigInteger(String.valueOf(x)).divide(y); }
     public static Number div(int x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).divide(y); }
-    public static Number div(long x, byte y) { return x / y; }
-    public static Number div(long x, short y) { return x / y; }
-    public static Number div(long x, int y) { return x / y; }
-    public static Number div(long x, long y) { return x / y; }
+    public static Number div(long x, byte y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(long x, short y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(long x, int y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
+    public static Number div(long x, long y) { if (x % y == 0) { return x / y; } else { return (double)x / (double)y; } }
     public static Number div(long x, float y) { return x / y; }
     public static Number div(long x, double y) { return x / y; }
     public static Number div(long x, BigInteger y) { return new BigInteger(String.valueOf(x)).divide(y); }
@@ -594,7 +610,7 @@ public class Generated {
     public static boolean eq(float x, short y) { return x == y; }
     public static boolean eq(float x, int y) { return x == y; }
     public static boolean eq(float x, long y) { return x == y; }
-    public static boolean eq(float x, float y) { return x == y; }
+    public static boolean eq(float x, float y) { return Float.compare(x, y) == 0; }
     public static boolean eq(float x, double y) { return x == y; }
     public static boolean eq(float x, BigInteger y) { return new BigInteger(String.valueOf(x)).equals(y); }
     public static boolean eq(float x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).equals(y); }
@@ -603,7 +619,7 @@ public class Generated {
     public static boolean eq(double x, int y) { return x == y; }
     public static boolean eq(double x, long y) { return x == y; }
     public static boolean eq(double x, float y) { return x == y; }
-    public static boolean eq(double x, double y) { return x == y; }
+    public static boolean eq(double x, double y) { return Double.compare(x, y) == 0; }
     public static boolean eq(double x, BigInteger y) { return new BigInteger(String.valueOf(x)).equals(y); }
     public static boolean eq(double x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).equals(y); }
     public static boolean eq(BigInteger x, byte y) { return x.equals(new BigInteger(String.valueOf(y))); }
@@ -750,68 +766,68 @@ public class Generated {
     public static boolean gt(BigDecimal x, double y) { return (x.compareTo(new BigDecimal(String.valueOf(y)))) > 0; }
     public static boolean gt(BigDecimal x, BigInteger y) { return (x.compareTo(new BigDecimal(String.valueOf(y)))) > 0; }
     public static boolean gt(BigDecimal x, BigDecimal y) { return x.compareTo(y) > 0; }
-    public static Number modulo(byte x, byte y) { return x % y; }
-    public static Number modulo(byte x, short y) { return x % y; }
-    public static Number modulo(byte x, int y) { return x % y; }
-    public static Number modulo(byte x, long y) { return x % y; }
-    public static Number modulo(byte x, float y) { return x % y; }
-    public static Number modulo(byte x, double y) { return x % y; }
-    public static Number modulo(byte x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
-    public static Number modulo(byte x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(short x, byte y) { return x % y; }
-    public static Number modulo(short x, short y) { return x % y; }
-    public static Number modulo(short x, int y) { return x % y; }
-    public static Number modulo(short x, long y) { return x % y; }
-    public static Number modulo(short x, float y) { return x % y; }
-    public static Number modulo(short x, double y) { return x % y; }
-    public static Number modulo(short x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
-    public static Number modulo(short x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(int x, byte y) { return x % y; }
-    public static Number modulo(int x, short y) { return x % y; }
-    public static Number modulo(int x, int y) { return x % y; }
-    public static Number modulo(int x, long y) { return x % y; }
-    public static Number modulo(int x, float y) { return x % y; }
-    public static Number modulo(int x, double y) { return x % y; }
-    public static Number modulo(int x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
-    public static Number modulo(int x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(long x, byte y) { return x % y; }
-    public static Number modulo(long x, short y) { return x % y; }
-    public static Number modulo(long x, int y) { return x % y; }
-    public static Number modulo(long x, long y) { return x % y; }
-    public static Number modulo(long x, float y) { return x % y; }
-    public static Number modulo(long x, double y) { return x % y; }
-    public static Number modulo(long x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
-    public static Number modulo(long x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(float x, byte y) { return x % y; }
-    public static Number modulo(float x, short y) { return x % y; }
-    public static Number modulo(float x, int y) { return x % y; }
-    public static Number modulo(float x, long y) { return x % y; }
-    public static Number modulo(float x, float y) { return x % y; }
-    public static Number modulo(float x, double y) { return x % y; }
-    public static Number modulo(float x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
-    public static Number modulo(float x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(double x, byte y) { return x % y; }
-    public static Number modulo(double x, short y) { return x % y; }
-    public static Number modulo(double x, int y) { return x % y; }
-    public static Number modulo(double x, long y) { return x % y; }
-    public static Number modulo(double x, float y) { return x % y; }
-    public static Number modulo(double x, double y) { return x % y; }
-    public static Number modulo(double x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
-    public static Number modulo(double x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(BigInteger x, byte y) { return x.remainder(new BigInteger(String.valueOf(y))); }
-    public static Number modulo(BigInteger x, short y) { return x.remainder(new BigInteger(String.valueOf(y))); }
-    public static Number modulo(BigInteger x, int y) { return x.remainder(new BigInteger(String.valueOf(y))); }
-    public static Number modulo(BigInteger x, long y) { return x.remainder(new BigInteger(String.valueOf(y))); }
-    public static Number modulo(BigInteger x, float y) { return x.remainder(new BigInteger(String.valueOf(y))); }
-    public static Number modulo(BigInteger x, double y) { return x.remainder(new BigInteger(String.valueOf(y))); }
-    public static Number modulo(BigInteger x, BigInteger y) { return x.remainder(y); }
-    public static Number modulo(BigInteger x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
-    public static Number modulo(BigDecimal x, byte y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, short y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, int y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, long y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, float y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, double y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, BigInteger y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
-    public static Number modulo(BigDecimal x, BigDecimal y) { return x.remainder(y); }
+    public static Number remainder(byte x, byte y) { return x % y; }
+    public static Number remainder(byte x, short y) { return x % y; }
+    public static Number remainder(byte x, int y) { return x % y; }
+    public static Number remainder(byte x, long y) { return x % y; }
+    public static Number remainder(byte x, float y) { return x % y; }
+    public static Number remainder(byte x, double y) { return x % y; }
+    public static Number remainder(byte x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
+    public static Number remainder(byte x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(short x, byte y) { return x % y; }
+    public static Number remainder(short x, short y) { return x % y; }
+    public static Number remainder(short x, int y) { return x % y; }
+    public static Number remainder(short x, long y) { return x % y; }
+    public static Number remainder(short x, float y) { return x % y; }
+    public static Number remainder(short x, double y) { return x % y; }
+    public static Number remainder(short x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
+    public static Number remainder(short x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(int x, byte y) { return x % y; }
+    public static Number remainder(int x, short y) { return x % y; }
+    public static Number remainder(int x, int y) { return x % y; }
+    public static Number remainder(int x, long y) { return x % y; }
+    public static Number remainder(int x, float y) { return x % y; }
+    public static Number remainder(int x, double y) { return x % y; }
+    public static Number remainder(int x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
+    public static Number remainder(int x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(long x, byte y) { return x % y; }
+    public static Number remainder(long x, short y) { return x % y; }
+    public static Number remainder(long x, int y) { return x % y; }
+    public static Number remainder(long x, long y) { return x % y; }
+    public static Number remainder(long x, float y) { return x % y; }
+    public static Number remainder(long x, double y) { return x % y; }
+    public static Number remainder(long x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
+    public static Number remainder(long x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(float x, byte y) { return x % y; }
+    public static Number remainder(float x, short y) { return x % y; }
+    public static Number remainder(float x, int y) { return x % y; }
+    public static Number remainder(float x, long y) { return x % y; }
+    public static Number remainder(float x, float y) { return x % y; }
+    public static Number remainder(float x, double y) { return x % y; }
+    public static Number remainder(float x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
+    public static Number remainder(float x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(double x, byte y) { return x % y; }
+    public static Number remainder(double x, short y) { return x % y; }
+    public static Number remainder(double x, int y) { return x % y; }
+    public static Number remainder(double x, long y) { return x % y; }
+    public static Number remainder(double x, float y) { return x % y; }
+    public static Number remainder(double x, double y) { return x % y; }
+    public static Number remainder(double x, BigInteger y) { return new BigInteger(String.valueOf(x)).remainder(y); }
+    public static Number remainder(double x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(BigInteger x, byte y) { return x.remainder(new BigInteger(String.valueOf(y))); }
+    public static Number remainder(BigInteger x, short y) { return x.remainder(new BigInteger(String.valueOf(y))); }
+    public static Number remainder(BigInteger x, int y) { return x.remainder(new BigInteger(String.valueOf(y))); }
+    public static Number remainder(BigInteger x, long y) { return x.remainder(new BigInteger(String.valueOf(y))); }
+    public static Number remainder(BigInteger x, float y) { return x.remainder(new BigInteger(String.valueOf(y))); }
+    public static Number remainder(BigInteger x, double y) { return x.remainder(new BigInteger(String.valueOf(y))); }
+    public static Number remainder(BigInteger x, BigInteger y) { return x.remainder(y); }
+    public static Number remainder(BigInteger x, BigDecimal y) { return new BigDecimal(String.valueOf(x)).remainder(y); }
+    public static Number remainder(BigDecimal x, byte y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, short y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, int y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, long y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, float y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, double y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, BigInteger y) { return x.remainder(new BigDecimal(String.valueOf(y))); }
+    public static Number remainder(BigDecimal x, BigDecimal y) { return x.remainder(y); }
 }

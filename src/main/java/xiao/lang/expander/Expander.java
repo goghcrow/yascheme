@@ -2,44 +2,155 @@ package xiao.lang.expander;
 
 import xiao.lang.*;
 
-import static xiao.lang.Misc.resource;
-import static xiao.lang.Procedures.list;
-import static xiao.lang.Procedures.sym;
-import static xiao.lang.Values.Callable;
-import static xiao.lang.Values.Procedure;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+
+import static xiao.lang.Misc.*;
+import static xiao.lang.RT.list;
+import static xiao.lang.RT.sym;
+import static xiao.lang.Values.PList;
 
 
 /**
- * eval 等方法转移到 interp 中
  * 健康宏展开 (根据马晓的 Youtube 演讲改写)
- *
  * 演讲视频 https://www.youtube.com/watch?v=Or_yKiI3Ha4
  * 演讲ppt https://my.eng.utah.edu/~cs3520/f19/lecture27.pdf
  * racket代码 https://github.com/mflatt/expander
  * racket 文档: https://docs.racket-lang.org/reference/syntax-model.html
+ * Fear of Macros: https://www.greghendershott.com/fear-of-macros/index.html
+ * Writing syntax-case Macros: https://blog.racket-lang.org/2011/04/writing-syntax-case-macros.html
+ *
  * @author chuxiaofeng
  */
 public class Expander {
+    // true: compileIdentifier 把 topLevelBinding 都直接替换成 symbol
+    // false: compileIdentifier 把 topLevelBinding 保留 value, 省去 interp 查找过程, but 无法 (set! $primitive ...)
+    public final static boolean COMPILE_CORE_TO_SYMBOL = true;
 
-    public static Object eval(String form) {
-        // todo 这里 read 重复
-        return eval(Reader.read(form), Namespace.currentNamespace());
+    final Env primitiveSyntaxesEnv = Interp.syntaxes().immutable();
+
+    /*final*/ Namespace currentNamespace;
+
+    // COMPILE_CORE_TO_SYMBOL = true
+    //      currentNamespace.toEnv(Interp.syntaxes())
+    // COMPILE_CORE_TO_SYMBOL = false
+    //      expand-time-namespace 展开环境只需要基础语法, 无需主动添加 procedure
+    //      因为 expand+compile 使用 ctx 中的 ns, declareCoreTopLevel 已经把 procedure 加到 ns 中了
+    final Env expandTImeEnv;
+
+    // COMPILE_CORE_TO_SYMBOL = true
+    //      currentNamespace.toEnv(Interp.syntaxes())
+    // COMPILE_CORE_TO_SYMBOL = false
+    //      run-time-namespace 运行时环境只需要基础语法, 无需主动添加 procedure
+    //      因为 compileIdentifier 把 topLevelBinding 都直接替换成 ns 中的值了(procedure)
+    final Env runTimeEnv;
+    boolean booted;
+
+    final static PList syntax_ss = ((PList) Reader.read(resource("/syntax.ss")));
+    final static PList struct_ss = ((PList) Reader.read(resource("/struct.ss")));
+    final static PList trace_ss = ((PList) Reader.read(resource("/trace.ss")));
+    final static PList unit_ss = ((PList) Reader.read(resource("/unit.ss")));
+    final static PList assert_ss = ((PList) Reader.read(resource("/assert.ss")));
+
+    // 单例的用法, 不能使用 provide, 且如果 set! 会互相影响, but 现在太慢了
+    private final static Expander ins = new Expander();
+    public static Expander of() {
+        // return new Expander();
+        return ins;
     }
 
-    public static Object eval(Object form) {
-        return eval(form, Namespace.currentNamespace());
+    private Expander() {
+        currentNamespace = baseNamespace(this);
+
+        // COMPILE_CORE_TO_SYMBOL = true 时, require 需要 syntax.ss,
+        // importSyntaxes 需要 expandTime 来 eval transformer, 所以提前初始化
+        expandTImeEnv = baseEnv();
+
+        // 这里分阶段, 每阶段定义的 procedure 下一阶段的宏可用, baseEnv() 会重新从 ns 加载符号
+        // hack:: provide 一些基础 procedure 到 currentNamespace
+        // 在 expand 的 provide 和 CorePrimitives 的 NamespaceSetVariableValue 中实现
+        require("/core0.ss", baseEnv());
+        require("/core.ss", baseEnv());
+
+        runTimeEnv = baseEnv();
+
+        booted = true;
     }
 
-    public static Object eval(Object form, Namespace ns) {
-        // expand+compile+eval-expression
-        Syntax expanded = expand(form, ns);
-        CompiledExpression compiled = compile(expanded, ns);
-        return eval(compiled);
+    Namespace baseNamespace(Expander expander) {
+        Namespace ns = Namespace.makeEmptyNamespace();
+        Core core = initCore(expander);
+        core.declareCoreTopLevel(ns);
+        return ns;
     }
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
+    Env baseEnv() {
+        if (Expander.COMPILE_CORE_TO_SYMBOL) {
+            return currentNamespace.toEnv(Interp.syntaxes()); // .immutable();
+        } else {
+            return primitiveSyntaxesEnv;
+        }
+    }
 
-    // step api
+    public Namespace currentNamespace() {
+        return currentNamespace;
+    }
+
+    public Syntax expandModule(Object form, Namespace ns) {
+        // PList letValues = list(sym("let-values"), list(), form);
+        Object empty = Syntaxes.beginOf(new ArrayList<>());
+        PList letValues = list(sym("let-values"), list(),
+                // 把初始的宏分成积分,
+                // 用一个子集 (core 用到的 syntax) syntax.ss 来运行 core0.ss 和 core.ss
+                // trace 会用到 core 中的函数, 所以 booted 之后再拼接
+                syntax_ss,
+                booted ? struct_ss : empty,
+                booted ? trace_ss : empty,
+                booted ? unit_ss : empty,
+                booted ? assert_ss : empty,
+
+                list(sym("debugger")), // for debugger
+
+                // 注意!!!, 这里加个 let-values,  保持 syntax 的 scope 干净
+                // 防止 syntax 引用的 primitive syntax 比如 if、lev-values (参见xiao.lang.Syntaxes)
+                // 被覆盖, 导致不健康的语义
+                // e.g. 如果不套这个 let-values
+                // (define if (lambda (a b c) "HELLO"))
+                // (and 1 2) 返回 "HELLO"
+                // 套这层 let-values (and 1 2) 才返回 2
+                list(sym("let-values"), list(), form)
+        );
+        return expand(letValues, ns);
+    }
+
+    public CompiledExpression compileModule(Object form, Namespace ns) {
+        return compile(expandModule(form, ns), ns);
+    }
+
+    Object expandTimeEval(Object compiled) {
+        return eval1(compiled, expandTImeEnv.derive());
+    }
+
+    Object runTimeEval(Object compiled) {
+        return eval1(compiled, runTimeEnv.derive());
+    }
+
+    static Object eval1(Object s, Env env) {
+        Object[] ref = new Object[1];
+        Interp.interp(Reader.read(s), env, v -> ref[0] = v);
+        return ref[0];
+    }
+
+    void require(String path, Env evalEnv) {
+        CompiledExpression compiled = compile(pathOfRes(path));
+        Interp.interp(compiled.sexpr, evalEnv, v -> {});
+    }
+
+    // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
+
+    // step: read -> expand -> compile -> eval
 
     // import core bindings
     // The `namespace-syntax-introduce` function adds the core scope to a
@@ -48,16 +159,16 @@ public class Expander {
     public static Syntax namespaceSyntaxIntroduce(Object s) {
         // All top-level bindings are in the core scope:
         // ~~The only initial bindings are in the core scope~~
-        return ((Syntax) Scope.add(s, Core.coreScope));
+        return (Syntax) Scope.add(s, Core.coreScope);
     }
 
     // expand-expression
-    public static Syntax expand(String form, Namespace ns) {
+    public Syntax expand(String form, Namespace ns) {
         return expand(Reader.read(form), ns);
     }
 
     // expand-expression
-    public static Syntax expand(Object form, Namespace ns) {
+    public Syntax expand(Object form, Namespace ns) {
         // convert to syntax-object
         Object syntax = Syntax.fromDatum(null, form);
         // add core-scope
@@ -65,182 +176,125 @@ public class Expander {
         return expand(introSyntax, ns);
     }
 
-    public static Syntax expand(Syntax s, Namespace ns) {
-        ExpandContext ctx = ExpandContext.makeExpandContext(ns);
-        return expandInContext(s, ctx);
-    }
-
-    public static CompiledExpression compile(Syntax s, Namespace ns) {
-        return new CompiledExpression(compileInNamespace(s, ns));
-    }
-
-    public static Object eval(CompiledExpression form) {
-        return runTimeEval(form.sexpr);
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////
-
-    private static Syntax expandInContext(Syntax s, ExpandContext ctx) {
+    public Syntax expand(Syntax s, Namespace ns) {
+        ExpandContext ctx = ExpandContext.makeExpandContext(this, ns);
         return Expansion.expand(s, ctx);
     }
 
-    private static Object compileInNamespace(Syntax s, Namespace ns) {
-        return Compiler.compile(s, ns);
+    public CompiledExpression compile(Syntax s, Namespace ns) {
+        Object compiled = Compiler.compile(s, ns);
+        return new CompiledExpression(this, compiled);
     }
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
+    public Object eval(CompiledExpression form) {
+        return runTimeEval(form.sexpr);
+    }
 
-    public static class CompiledExpression {
-        public final Object sexpr;
+    // read+expand+compile+eval-expression
+    public Object readExpandCompileEval(String s, Namespace ns) {
+        Syntax expanded = expand(Reader.read(s), ns);
+        CompiledExpression compiled = compile(expanded, ns);
+        return eval(compiled);
+    }
 
-        public CompiledExpression(Object sexpr) {
-            this.sexpr = sexpr;
+    // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
+
+    public CompiledExpression compile(Path path) {
+        String src = read(path);
+        String md5 = md5(src);
+        String compiledPath = path.toUri().getPath() + "." + md5;
+        CompiledExpression compiled;
+        if (Files.exists(Paths.get(compiledPath))) {
+            Object sexpr = unSerialize(compiledPath);
+            compiled = new CompiledExpression(this, sexpr);
+        } else {
+            Object form = Reader.read(src);
+            compiled = compileModule(form, currentNamespace);
+            serialize(compiledPath, compiled.sexpr);
         }
-
-        @Override
-        public String toString() {
-            return "#<compiled-expression:" + sexpr + ">";
-        }
+        return compiled;
     }
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
+    // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 
-    public static Object expandTimeEval(Object compiled) {
-        return eval(interp_forExpand, compiled, env_forExpand.derive());
-    }
+    // init core form & primitive
+    static Core initCore(Expander expander) {
+        Core core = new Core();
 
-    public static Object runTimeEval(Object compiled) {
-        return eval(interp_forRun, compiled, env_forRun.derive());
-    }
+        // Register core forms
 
-    static Object eval(Interp interp, Object s, Env env) {
-        Object[] ref = new Object[1];
-        interp.interp(Reader.read(s), env, v -> ref[0] = v);
-        return ref[0];
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////
-
-    // todo !!! 注意 static 顺序
-    // todo 程序改成 程序嵌套 (print-values)
-
-    final static Interp interp_forCurrentNamespace = new Interp(false);
-    final static Interp interp_forExpand = new Interp(false);
-    final static Interp interp_forRun = new Interp(false);
-
-    final static Env env_forCurrentNamespace = new Env();
-    final static Env env_forExpand = new Env(); // expand-time-namespace
-    final static Env env_forRun = new Env(); // run-time-namespace
-
-    static {
-        initCurrentNamespaceEnv();
-        initCurrentNamespace();
-        initExpandEnv();
-        initRunTimeEnv();
-        require("/core/boot1.ss");
-    }
-
-    static void initCurrentNamespaceEnv() {
-        Procedures.init(interp_forCurrentNamespace, env_forCurrentNamespace);
-        Syntaxes.init(interp_forCurrentNamespace, env_forCurrentNamespace);
-        interp_forCurrentNamespace.interp(Reader.read(resource("/core/boot0.ss")), env_forCurrentNamespace, v -> { });
-    }
-
-    static void initCurrentNamespace() {
-        // Register core forms:
-        // expand-expr
-        Core.addCoreForm(sym("lambda"), CoreForms::lambda);
-        Core.addCoreForm(sym("λ"), CoreForms::lambda);
-        Core.addCoreForm(sym("case-lambda"), CoreForms::caseLambda);
-
-        Core.addCoreForm(sym("let-values"), CoreForms.makeLetValuesForm(false, false));
-        Core.addCoreForm(sym("letrec-values"), CoreForms.makeLetValuesForm(false, true));
-        Core.addCoreForm(sym("letrec-syntaxes+values"), CoreForms.makeLetValuesForm(true, true));
-
-        Core.addCoreForm(sym("#%datum"), CoreForms::datum);
-        Core.addCoreForm(sym("#%app"), CoreForms::app);
-        Core.addCoreForm(sym("#%top"), CoreForms::top);
-        Core.addCoreForm(sym("quote"), CoreForms::quote);
-        Core.addCoreForm(sym("quasiquote"), CoreForms::quasiquote);
-        Core.addCoreForm(sym("quote-syntax"), CoreForms::quoteSyntax);
-        Core.addCoreForm(sym("if"), CoreForms::iff);
-        Core.addCoreForm(sym("with-continuation-mark"), CoreForms::withContinuationMark);
-        Core.addCoreForm(sym("begin"), CoreForms::begin);
-        Core.addCoreForm(sym("begin0"), CoreForms::begin);
-        Core.addCoreForm(sym("set!"), CoreForms::set);
-
-        Core.addCoreForm(sym("new"), CoreForms::new1);
-        Core.addCoreForm(sym("."), CoreForms::dot);
-
-        Core.addCoreForm(sym("provide"), CoreForms::provide);
-
-        // expand-top-level
-        Core.addCoreForm(sym("define-values"), TopLevelForms::defineValues);
-        Core.addCoreForm(sym("define-syntaxes"), TopLevelForms::defineSyntaxes);
-
-
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        // Core Primitives
-        // for run time
-        // Register core primitives:
-        // This list will need to be a lot longer...
-
-        Core.addCorePrimitive(sym("syntax-e"),
-                Procedure.nameOf("syntax-e", CorePrimitives::syntax_e));
-        Core.addCorePrimitive(sym("datum->syntax"),
-                Procedure.nameOf("datum->syntax", CorePrimitives::datum_to_syntax));
-        Core.addCorePrimitive(sym("syntax->datum"),
-                Procedure.nameOf("syntax->datum", CorePrimitives::syntax_to_datum));
-        Core.addCorePrimitive(sym("namespace-set-variable-value!"),
-                Procedure.nameOf("namespace-set-variable-value!",
-                        CorePrimitives::namespace_set_variable_value));
-
-        env_forCurrentNamespace.env.forEach((sym, v) -> {
-            if (v.value instanceof Callable) {
-                Core.addCorePrimitive(sym(sym), Callable.nameOf(sym, ((Callable) v.value)));
-            }
+        core.addCoreForm(sym("debugger"), (s, ctx) -> {
+            return Syntax.fromDatum(s, list(sym("quote-syntax"), s));
         });
 
+        // expand-expr
+        core.addCoreForm(sym("lambda"), CoreForms::lambda);
+        core.addCoreForm(sym("λ"), CoreForms::lambda);
+        core.addCoreForm(sym("case-lambda"), CoreForms::caseLambda);
+
+        core.addCoreForm(sym("let-values"), CoreForms.makeLetValuesForm(false, false));
+        core.addCoreForm(sym("letrec-values"), CoreForms.makeLetValuesForm(false, true));
+        core.addCoreForm(sym("letrec-syntaxes+values"), CoreForms.makeLetValuesForm(true, true));
+
+        core.addCoreForm(sym("#%datum"), CoreForms::datum);
+        core.addCoreForm(sym("#%app"), CoreForms::app);
+        core.addCoreForm(sym("#%top"), CoreForms::top);
+        core.addCoreForm(sym("quote"), CoreForms::quote);
+        core.addCoreForm(sym("quasiquote"), CoreForms::quasiquote);
+        core.addCoreForm(sym("quote-syntax"), CoreForms::quoteSyntax);
+        core.addCoreForm(sym("syntax"), CoreForms::syntax);
+        core.addCoreForm(sym("if"), CoreForms::iff);
+        core.addCoreForm(sym("with-continuation-mark"), CoreForms::withContinuationMark);
+        core.addCoreForm(sym("begin"), CoreForms::begin);
+        core.addCoreForm(sym("begin0"), CoreForms::begin);
+        core.addCoreForm(sym("set!"), CoreForms::set);
+
+        core.addCoreForm(sym("new"), CoreForms::new1);
+        core.addCoreForm(sym("."), CoreForms::dot);
+
+        core.addCoreForm(sym("provide"), CoreForms::provide);
+
+        // expand-top-level
+        core.addCoreForm(sym("define-values"), TopLevelForms::defineValues);
+        core.addCoreForm(sym("define-syntaxes"), TopLevelForms::defineSyntaxes);
+
+
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // Register core primitives
 
-        // Fill in the (only) namespace, which ties the loop
-        // between binding the expander
-        Core.declareCoreTopLevel(Namespace.currentNamespace());
+        // 包括
+        // 1. interp procedure
+        // 2. core.ss 中加入环境的 procedure
+        // 3. syntax-e datum->syntax syntax->datum namespace-set-variable-value! ...
+        Interp.procedures(expander).forEach((sym, v) -> {
+            core.addCorePrimitive(sym(sym), (Values.Procedure) v);
+        });
+
+        // expand time 用到的 procedure
+
+        // syntax
+        addCorePrimitive(core, "syntax?", CorePrimitives::isSyntax);
+        addCorePrimitive(core, "identifier?", CorePrimitives::isIdentifier);
+        addCorePrimitive(core, "syntax-e", CorePrimitives::syntax_e);
+        // todo (syntax-property stx prop)
+        addCorePrimitive(core, "datum->syntax", CorePrimitives::datum_to_syntax);
+        addCorePrimitive(core, "syntax->datum", CorePrimitives::syntax_to_datum);
+        addCorePrimitive(core, "syntax->list", CorePrimitives::syntax_to_list);
+
+        // binding
+        addCorePrimitive(core, "free-identifier=?", CorePrimitives::isFreeIdentifierEquals);
+        addCorePrimitive(core, "identifier-binding", CorePrimitives::identifierBinding);
+
+        addCorePrimitive(core, "namespace-syntax-introduce", CorePrimitives::namespaceSyntaxIntroduce);
+
+        // namespace
+        addCorePrimitive(core, "current-namespace", new CorePrimitives.CurrentNamespace(expander));
+        addCorePrimitive(core, "namespace-variable-value", new CorePrimitives.NamespaceVariableValue(expander));
+        addCorePrimitive(core, "namespace-set-variable-value!", new CorePrimitives.NamespaceSetVariableValue(expander));
+        return core;
     }
 
-    static void initExpandEnv() {
-        Procedures.init(interp_forExpand, env_forExpand);
-        Syntaxes.init(interp_forExpand, env_forExpand);
-        Namespace.currentNamespace().variables.forEach((k, v) -> env_forExpand.put(k.name, v));
-//        env_forExpand.put("current-namespace", );
-//        env_forExpand.put("namespace-get-variable", );
-//        env_forExpand.put("syntax-shift-phase-level", );
-    }
-
-    static void initRunTimeEnv() {
-        Procedures.init(interp_forRun, env_forRun);
-        Syntaxes.init(interp_forRun, env_forRun);
-        Namespace.currentNamespace().variables.forEach((k, v) -> env_forRun.put(k.name, v));
-//        env_forRun.put("current-namespace", );
-//        env_forRun.put("namespace-get-variable", );
-//        env_forRun.put("syntax-shift-phase-level", );
-    }
-
-    static void require(String path) {
-        Object form = Reader.read(resource(path));
-        CompiledExpression compiled = compileWithSyntax(form);
-        interp_forCurrentNamespace.interp(compiled.sexpr, env_forCurrentNamespace, v -> {});
-    }
-
-    // public for test
-    public static CompiledExpression compileWithSyntax(Object form) {
-        Object syntax = Reader.read(resource("/core/syntax.ss"));
-        Namespace ns = Namespace.currentNamespace();
-        return compile(expand(list(
-                sym("let-values"),
-                list(),
-                syntax,
-                form
-        ), ns), ns);
+    static void addCorePrimitive(Core core, String sym, Values.Procedure procedure) {
+        core.addCorePrimitive(sym(sym), Values.Procedure.nameOf(sym, procedure));
     }
 }

@@ -1,21 +1,20 @@
 package xiao.lang.expander;
 
 import xiao.lang.InterpError;
-import xiao.lang.Procedures;
+import xiao.lang.RT;
 
 import java.util.List;
 
 import static xiao.lang.Contract.expect;
 import static xiao.lang.Pattern.Finder;
-import static xiao.lang.Procedures.*;
-import static xiao.lang.Reader.MemberAccessorExpansion.isJavaClassName;
+import static xiao.lang.Reader.isJavaClassName;
 import static xiao.lang.Values.PList;
 import static xiao.lang.Values.Symbol;
-import static xiao.lang.expander.Bindings.LocalBinding;
-import static xiao.lang.expander.Bindings.TopLevelBinding;
+import static xiao.lang.expander.Binding.LocalBinding;
+import static xiao.lang.expander.Binding.TopLevelBinding;
 import static xiao.lang.expander.CUtils.map;
-import static xiao.lang.expander.Utils.match;
-import static xiao.lang.expander.Utils.tryMatch;
+import static xiao.lang.expander.SyntaxMatcher.match;
+import static xiao.lang.expander.SyntaxMatcher.tryMatch;
 
 /**
  * 1.2.4 Compilation : bridge to the host
@@ -38,10 +37,6 @@ public class Compiler {
 
     // Convert an expanded syntax object to an expression that is represented
     // by a plain S-expression.
-    public static Object compile(Syntax s) {
-        // compile-time namespace
-        return compile(s, Namespace.currentNamespace());
-    }
 
     public static Object compile(Syntax s, Namespace ns) {
         if (Syntax.isPair(s)) {
@@ -61,12 +56,40 @@ public class Compiler {
             expect(sym != null, "missing a local-binding after expansion: " + b);
             return sym;
         } else if (b instanceof TopLevelBinding) {
-            Symbol sym = b.symbol();
-            Object corePrimitive = ns.getVariable(sym, null);
-            expect(corePrimitive != null, "missing a top-binding after expansion: " + b);
-            return corePrimitive;
+            return compileTopLevelBinding(((TopLevelBinding) b), ns);
         } else {
             throw new InterpError("not a reference to a local binding: " + s);
+        }
+    }
+
+    static Object compileTopLevelBinding(TopLevelBinding b, Namespace ns) {
+        Symbol sym = b.symbol();
+        Object corePrimitive = ns.getVariable(sym, null);
+        expect(corePrimitive != null, "missing a top-binding after expansion: " + b);
+
+        if (Expander.COMPILE_CORE_TO_SYMBOL) {
+            // 因为局部变量都被 gensym 了, 所以可以直接替换成名字
+            String s1 = corePrimitive.toString();
+            if (s1.startsWith("#<procedure:")) {
+                return RT.sym(s1.substring("#<procedure:".length(), s1.length() - 1));
+            } else if (s1.startsWith("#<syntax:")) {
+                return RT.sym(s1.substring("#<syntax:".length(), s1.length() - 1));
+            } else {
+                // 直接返回数据分支
+                // namespace-set-variable-value! 引入的, 必须是 (quote datum) 形式
+                if (corePrimitive instanceof PList) {
+                    PList lst = (PList) corePrimitive;
+                    if (lst.size() == 2) {
+                        if (lst.get(0).equals(RT.sym("quote"))) {
+                            return corePrimitive;
+                        }
+                    }
+                }
+                // 其他场景不应该发生
+                throw new InterpError("不支持编译的 identifier: " + corePrimitive);
+            }
+        } else {
+            return corePrimitive;
         }
     }
 
@@ -80,7 +103,7 @@ public class Compiler {
                 Finder r = match("(lambda formals body)", s);
                 Syntax formals = r.get("formals");
                 Syntax body = r.get("body");
-                return list(
+                return RT.list(
                         coreSym,
                         compileLambdaFormals(formals),
                         compile(body, ns)
@@ -90,9 +113,9 @@ public class Compiler {
                 Finder r = match("(case-lambda [formals body] ...)", s);
                 List<Syntax> formalss = r.get("formals");
                 List<Syntax> bodys = r.get("body");
-                return list(
+                return RT.list(
                         coreSym,
-                        splice(map(formalss, bodys, (formals, body) -> list(
+                        RT.splice(map(formalss, bodys, (formals, body) -> RT.list(
                                 compileLambdaFormals(formals),
                                 compile(body, ns)
                         )))
@@ -101,14 +124,14 @@ public class Compiler {
             case "#%app": {
                 Finder r = match("(#%app . rest)", s);
                 List<Syntax> rest = r.get("rest");
-                return listColl(map(rest, it -> compile(it, ns)));
+                return RT.listColl(map(rest, it -> compile(it, ns)));
             }
             case "if": {
                 Finder r = match("(if tst thn els)", s);
                 Syntax tst = r.get("tst");
                 Syntax thn = r.get("thn");
                 Syntax els = r.get("els");
-                return list(
+                return RT.list(
                         coreSym,
                         compile(tst, ns),
                         compile(thn, ns),
@@ -120,7 +143,7 @@ public class Compiler {
                 Syntax key = r.get("key");
                 Syntax val = r.get("val");
                 Syntax body = r.get("body");
-                return list(
+                return RT.list(
                         coreSym,
                         compile(key, ns),
                         compile(val, ns),
@@ -131,40 +154,39 @@ public class Compiler {
             case "begin0": {
                 Finder r = match("(begin e ...+)", s);
                 List<Syntax> es = r.get("e");
-                return list(
-                        coreSym,
-                        splice(map(es, e -> compile(e, ns)))
-                );
+                if (es.size() == 1) {
+                    return compile(es.get(0), ns);
+                } else {
+                    return RT.list(
+                            coreSym,
+                            RT.splice(map(es, e -> compile(e, ns)))
+                    );
+                }
             }
-            case "set!": {
+            case "set!":
                 return compileSet(coreSym, s, ns);
-            }
             case "let-values":
             case "letrec-values":
                 return compileLet(coreSym, s, ns);
             case "quote": {
                 Finder r = match("(quote datum)", s);
                 Syntax datum = r.get("datum");
-                return list(
+                return RT.list(
                         coreSym,
                         // strip scopes for quote
                         Syntax.toDatum(datum)
                 );
             }
-            case "quasiquote": {
-                Finder r = match("(quasiquote datum)", s);
-                Syntax datum = r.get("datum");
-                expect(Syntax.isList(datum));
-                return list(
-                        coreSym,
-                        compileQuasiquote(datum)
-                );
-            }
+            // expand 阶段已经展开成 append list list* 形式
+            // case "quasiquote": { }
             case "quote-syntax": {
-                Finder r = match("(quote-syntax datum)", s);
+                Finder r = tryMatch("(quote-syntax datum)", s);
+                if (r == null) {
+                    r = match("(quote-syntax datum local)", s);
+                }
                 Syntax datum = r.get("datum");
-                return list(
-                        sym("quote"),
+                return RT.list(
+                        RT.sym("quote"),
                         // preserve scopes for quote-syntax
                         datum
                 );
@@ -173,15 +195,14 @@ public class Compiler {
                 Finder r = match("(new id:class-name args ...)", s);
                 Syntax className = r.get("id:class-name");
                 List<Syntax> args = r.get("args");
-                return list(
-                        sym("new"),
+                return RT.list(
+                        RT.sym("new"),
                         Syntax.toDatum(className),
-                        splice(map(args, arg -> compile(arg, ns)))
+                        RT.splice(map(args, arg -> compile(arg, ns)))
                 );
             }
-            case ".": {
+            case ".":
                 return compileDot(coreSym, s, ns);
-            }
             default:
                 throw new InterpError("unrecognized core form: " + coreSym);
         }
@@ -200,7 +221,7 @@ public class Compiler {
         Finder r = match("(set! id rhs)", s);
         Syntax id = r.get("id");
         Syntax rhs = r.get("rhs");
-        return list(
+        return RT.list(
                 coreSym,
                 compile(id, ns),
                 compile(rhs, ns)
@@ -208,50 +229,22 @@ public class Compiler {
     }
 
     static Object compileSetField(Symbol coreSym, Syntax s, Namespace ns) {
-        Finder r = match("(set! (. cls-or-ins id:field) rhs)", new String[] { "." }, s);
+        Finder r = match("(set! (. cls-or-ins id:field) rhs)", s, ".");
         Syntax clsOrIns = r.get("cls-or-ins");
         Syntax field = r.get("id:field");
         Syntax rhs = r.get("rhs");
 
         // (set! (. className static-field-name) expr)
         // (set! (. instance-expr instance-field-name) expr)
-        return list(
+        return RT.list(
                 coreSym,
-                list(
-                        sym("."),
-                        compileClassOrInstance(clsOrIns),
+                RT.list(
+                        RT.sym("."),
+                        compileClassOrInstance(clsOrIns, ns),
                         Syntax.toDatum(field)
                 ),
                 compile(rhs, ns)
         );
-    }
-
-    static Object compileQuasiquote(Object datum) {
-        Object lst = CoreForms.toSyntaxList(datum);
-        if (lst == Boolean.FALSE) {
-            return Syntax.toDatum((datum));
-        } else if (isNull(lst)) {
-            return Syntax.toDatum((datum));
-        } else if (isPair(lst)) {
-            Object rest = compileQuasiquote(cdr(lst));
-            Finder r = tryMatch("(id:unquote form)", car(lst));
-            if (r != null) {
-                Syntax unquote = r.get("id:unquote");
-                Syntax form = r.get("form");
-                String name = ((Symbol) unquote.e).name;
-                if (name.equals("unquote") || name.equals("unquote-splicing")) {
-                    return cons(list(sym(name), compile(form)), rest);
-                } else {
-                    Object fst = compileQuasiquote(car(lst));
-                    return cons(Syntax.toDatum(fst), rest);
-                }
-            } else {
-                Object fst = compileQuasiquote(car(lst));
-                return cons(Syntax.toDatum(fst), rest);
-            }
-        } else {
-            return Syntax.toDatum((datum));
-        }
     }
 
     // (case-lambda (formals body ...+) ...)
@@ -260,22 +253,19 @@ public class Compiler {
     // 	 	|	 	rest-id
     static Object compileLambdaFormals(Object formals) {
         if (Syntax.isIdentifier(formals)) {
-            if ((Syntax.isDot(formals))) {
-                return ((Syntax) formals).e;
-            } else {
-                return local2symbol(((Syntax) formals));
-            }
+            return local2symbol(((Syntax) formals));
         } else if (formals instanceof Syntax) {
             return compileLambdaFormals(((Syntax) formals).e);
-        } else if (formals instanceof PList) {  // fast-route
-            return Procedures.map(Compiler::compileLambdaFormals, (PList) formals);
-        } else if (isPair(formals)) {
-            return cons(
-                    compileLambdaFormals(car(formals)),
-                    compileLambdaFormals(cdr(formals))
+        } else if (formals instanceof PList) {
+            // fast-route
+            return RT.map(Compiler::compileLambdaFormals, (PList) formals);
+        } else if (RT.isPair(formals)) {
+            return RT.cons(
+                    compileLambdaFormals(RT.car(formals)),
+                    compileLambdaFormals(RT.cdr(formals))
             );
         } else {
-            return Procedures.Null();
+            return RT.Null();
         }
     }
 
@@ -287,10 +277,10 @@ public class Compiler {
         List<Syntax> rhss = r.get("rhs");
         Syntax body = r.get("body");
         // Scope sc = Scope.of();
-        return list(
+        return RT.list(
                 coreSym,
-                listColl(map(idss, rhss, (ids, rhs) -> list(
-                        listColl(map(ids, Compiler::local2symbol)),
+                RT.listColl(map(idss, rhss, (ids, rhs) -> RT.list(
+                        RT.listColl(map(ids, Compiler::local2symbol)),
                         compile(rhs, ns)
                 ))),
                 compile(body, ns)
@@ -308,6 +298,10 @@ public class Compiler {
     }
 
     static Object compileDotMethod(Symbol coreSym, Syntax s, Namespace ns) {
+        // 注意: expansion 改写这里不准确, 属性访问也统一被改写成无参方法调用
+        // (.instanceMember instance-expr) ==> (. instance-expr (instanceMember))
+        // (.instanceMember ClassName) ==> (. ClassName (instanceMember))
+
         // 实例静态方法调用
         // (. instance-expr (method-symbol args ...))
         // (. ClassName-symbol (method-symbol args ...))
@@ -316,12 +310,12 @@ public class Compiler {
         Syntax methodName = r.get("id:method-name");
         List<Syntax> args = r.get("args");
 
-        return list(
+        return RT.list(
                 coreSym,
-                compileClassOrInstance(clsOrIns),
-                list(
+                compileClassOrInstance(clsOrIns, ns),
+                RT.list(
                         Syntax.toDatum(methodName),
-                        splice(map(args, arg -> compile(arg, ns)))
+                        RT.splice(map(args, arg -> compile(arg, ns)))
                 )
         );
     }
@@ -339,16 +333,16 @@ public class Compiler {
         Syntax member = r.get("id:member");
         List<Syntax> args = r.get("args");
 
-        return list(
+        return RT.list(
                 coreSym,
-                compileClassOrInstance(clsOrIns),
+                compileClassOrInstance(clsOrIns, ns),
                 Syntax.toDatum(member),
-                splice(map(args, arg -> compile(arg, ns)))
+                RT.splice(map(args, arg -> compile(arg, ns)))
         );
     }
 
-    static Object compileClassOrInstance(Syntax clsOrIns) {
-        return isJavaClassName(clsOrIns.unbox()) ? Syntax.toDatum(clsOrIns) : compile(clsOrIns);
+    static Object compileClassOrInstance(Syntax clsOrIns, Namespace ns) {
+        return isJavaClassName(clsOrIns.unbox()) ? Syntax.toDatum(clsOrIns) : compile(clsOrIns, ns);
     }
 
     // local->symbol

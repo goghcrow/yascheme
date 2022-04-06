@@ -27,13 +27,67 @@ import static xiao.lang.Misc.Nullable;
  * @author chuxiaofeng
  */
 public class ExpandContext {
-    @Nullable ScopeSet useSiteScopes; // #f or boxed list: scopes that should be pruned from binders
+
+    final static Type root = new Type.Root(null);
+    final static Type body = new Type.Body(null);
+    final static Type fin_body = new Type.FinBody(null);
+    final static Type transformer = new Type.Transformer(null);
+
+    // for debug
+    static class Type {
+        static class Root extends Type {
+            Root(Type parent) {
+                super("root", parent);
+            }
+
+            @Override
+            public String toString() {
+                return "root";
+            }
+        }
+        static class Body extends Type {
+            Body(Type parent) {
+                super("body", parent);
+            }
+        }
+        static class FinBody extends Type {
+            FinBody(Type parent) {
+                super("fin-body", parent);
+            }
+        }
+        static class Transformer extends Type {
+            Transformer(Type parent) {
+                super("transformer", parent);}
+        }
+
+        final String name;
+        final Type parent;
+        Type(String name, Type parent) {
+            this.name = name;
+            this.parent = parent;
+        }
+        String name() {
+            return parent == null ? name : parent.name() + ":" + name;
+        }
+    }
+
+    final Type type;
+
+    @Override
+    public String toString() {
+        return "<expand-ctx: " + type.name() + ">";
+    }
+
+    final Expander expander;
+
+    // #f or boxed list: scopes that should be pruned from binders
+    @Nullable ScopeSet useSiteScopes;
 
     // namespace for top-levels binding
     // identifier 从 ns 中解析
-    // expansion Namespace::getTransformer
+    // expansion阶段: Namespace::getTransformer
     //      SyntaxTransformer
-    // compile   Namespace::getVariable
+    // compile阶段:   Namespace::getVariable
     //      Compiler::compileIdentifier 用来从 id 索引 core primitive
     final Namespace namespace;
 
@@ -47,36 +101,61 @@ public class ExpandContext {
     // 展开 define-values define-syntaxes
     final Env env;
 
-    final boolean onlyImmediate; // #t => stop at core forms
-    final @Nullable Scope postExpansionScope; // scope to add to every expansion; #f if none
+    // list of scopes that should be pruned by `quote-syntax`
+    // expandBody 加入 inside-scope
+    // finishExpandingBody 加入 use-site-scope
+    // makeLambdaExpander 加入的 lambda-scope
+    final ScopeSet scopes;
 
-    ExpandContext(ScopeSet useSiteScopes,
+    // #t => stop at core forms
+    final boolean onlyImmediate;
+
+    // scope to add to every expansion; #f if none
+    final @Nullable Scope postExpansionScope;
+
+    ExpandContext(Type type,
+                  Expander expander,
+                  ScopeSet useSiteScopes,
                   Namespace namespace,
                   Env env,
+                  ScopeSet scopes,
                   boolean onlyImmediate,
                   Scope postExpansionScope) {
+        this.type = type;
+        this.expander = expander;
         this.useSiteScopes = useSiteScopes;
         this.namespace = namespace;
         this.env = env;
+        this.scopes = scopes;
         this.onlyImmediate = onlyImmediate;
         this.postExpansionScope = postExpansionScope;
     }
 
-    ExpandContext newEnv(Env env) {
+//    ExpandContext deriveEnv(Type type) {
+//        return deriveEnv(type, scopes);
+//    }
+
+    ExpandContext deriveEnv(Type type, ScopeSet scopes) {
         return new ExpandContext(
+                type,
+                expander,
                 useSiteScopes,
                 namespace,
-                env,
+                env.derive(),
+                scopes,
                 onlyImmediate,
                 postExpansionScope
         );
     }
 
-    static ExpandContext makeExpandContext(Namespace ns) {
+    static ExpandContext makeExpandContext(Expander expander, Namespace ns) {
         return new ExpandContext(
+                root,
+                expander,
                 null,
                 ns,
                 new Env(),
+                ScopeSet.empty(),
                 false,
                 null
         );

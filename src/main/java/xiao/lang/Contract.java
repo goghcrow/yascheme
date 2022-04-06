@@ -1,6 +1,8 @@
 package xiao.lang;
 
 /**
+ * todo contract violation, expect but
+ * todo arity mismatch, expect but
  * @author chuxiaofeng
  */
 public interface Contract {

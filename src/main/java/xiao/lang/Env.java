@@ -2,6 +2,7 @@ package xiao.lang;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.BiConsumer;
 
 import static xiao.lang.Misc.Nullable;
 
@@ -11,7 +12,8 @@ import static xiao.lang.Misc.Nullable;
  */
 public class Env {
 
-    // binding 容易区分是未定义还是 null, 且可以根据 binding 做一些 feature
+    // 1. binding 容易区分是未定义还是 null
+    // 2. 且可以根据 binding 做一些 feature, 比如 const\freeze 之类
     public static class Binding {
         public final Object value;
 
@@ -25,14 +27,30 @@ public class Env {
         }
     }
 
-    public final Map<String, Binding> env = new LinkedHashMap<>();
-    public final /*@Nullable*/ Env parent;
+    static class ImmutableEnv extends Env {
+        ImmutableEnv(Env env) {
+            super(env.env, env.parent);
+        }
+
+        @Override
+        public void put(String id, Object val) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    final Map<String, Binding> env;
+    final /*@Nullable*/ Env parent;
 
     public Env() {
         this(null);
     }
 
-    public Env(Env parent) {
+    Env(Env parent) {
+        this(new LinkedHashMap<>(), parent);
+    }
+
+    Env(Map<String, Binding> env, Env parent) {
+        this.env = env;
         this.parent = parent;
     }
 
@@ -41,8 +59,12 @@ public class Env {
         return new Env(this);
     }
 
-    public int size() {
-        return env.size();
+    public Env immutable() {
+        return new ImmutableEnv(this);
+    }
+
+    public void forEach(BiConsumer<String, Object> action) {
+        env.forEach((k, v) -> action.accept(k, v.value));
     }
 
     public Binding lookupLocal(String id) {
@@ -69,10 +91,6 @@ public class Env {
         } else {
             return null;
         }
-    }
-
-    public boolean defined(String id) {
-        return findDefinedScope(id) != null;
     }
 
     public void put(String id, Object val) {

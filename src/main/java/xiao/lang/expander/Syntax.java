@@ -1,15 +1,18 @@
 package xiao.lang.expander;
 
-import xiao.lang.Names;
-import xiao.lang.Procedures;
+import xiao.lang.Pattern;
+import xiao.lang.RT;
 
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 
 import static xiao.lang.Misc.Nullable;
-import static xiao.lang.Procedures.cons;
-import static xiao.lang.Procedures.map;
+import static xiao.lang.RT.*;
 import static xiao.lang.Values.*;
+import static xiao.lang.expander.Expansion.rebuild;
+import static xiao.lang.expander.SyntaxMatcher.match;
+import static xiao.lang.expander.SyntaxMatcher.tryMatch;
 
 // ::pico::
 // pico, xiao.lang.expander0.Syntax
@@ -20,7 +23,7 @@ import static xiao.lang.Values.*;
 /**
  * @author chuxiaofeng
  */
-public class Syntax {
+public class Syntax implements Serializable {
     // datum and nested syntax objects
     public final Object e;
     // scopes that apply at all phases
@@ -90,19 +93,15 @@ public class Syntax {
     }
 
     public static boolean isIdentifier(Object s) {
-        return s instanceof Syntax && ((Syntax) s).e instanceof Symbol;
-    }
-
-    public static boolean isDot(Object s) {
-        return isIdentifier(s) && ((Symbol) ((Syntax) s).e).name.equals(Names.DOT);
+        return s instanceof Syntax && RT.isSymbol(((Syntax) s).e);
     }
 
     public static boolean isPair(Object s) {
-        return s instanceof Syntax && Procedures.isPair(((Syntax) s).e);
+        return s instanceof Syntax && RT.isPair(((Syntax) s).e);
     }
 
     public static boolean isList(Object s) {
-        return s instanceof Syntax && Procedures.isList(((Syntax) s).e);
+        return s instanceof Syntax && RT.isList(((Syntax) s).e);
     }
 
     // 所有节点都 wrap 成 syntax
@@ -110,10 +109,19 @@ public class Syntax {
     // normalized `datum->syntax` to accept an existing syntax object that
     // supplies the scope set for new syntax
 
+    // Converts the datum v to a syntax object. If v is already a syntax object,
+    // then there is no conversion, and v is returned unmodified.
+    // The contents of pairs are recursively converted.
+    // For any kind of value conversion means wrapping the value with lexical information.
     public static Syntax fromDatum(@Nullable Syntax stxC, Object v) {
-        return fromDatum(stxC, v, null);
+//        if (stxC == Core.coreStx) {
+//            return fromDatum(stxC, v, Core.coreStx);
+//        } else {
+            return fromDatum(stxC, v, null);
+//        }
     }
 
+    // Converted objects in v are given the lexical context information of stxC and the prop information of stxP.
     public static Syntax fromDatum(@Nullable Syntax stxC, Object v, @Nullable Syntax stxP) {
         if (v instanceof Syntax) {
             return ((Syntax) v);
@@ -166,6 +174,15 @@ public class Syntax {
             );
         } else {
             return se;
+        }
+    }
+
+    public static Object toList(Syntax s) /* : list? */ {
+        Object d = toDatum(s);
+        if (RT.isList(d)) {
+            return d;
+        } else {
+            return false;
         }
     }
 }

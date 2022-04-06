@@ -1,6 +1,6 @@
 package xiao.lang.expander;
 
-import xiao.lang.Procedures;
+import xiao.lang.RT;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -14,8 +14,8 @@ import static xiao.lang.Contract.expect;
  */
 public class DupCheck {
 
+    // hash-eq
     static Map<Object, List<Syntax>> makeCheckNoDuplicateTable() {
-        // hash-eq
         return new HashMap<>();
     }
 
@@ -31,6 +31,7 @@ public class DupCheck {
     }
 
     // type v = Syntax | List<v>
+    private
     static void checkNoDuplicateIds1(Object v, Map<Object, List<Syntax>> ht) {
         if (Syntax.isIdentifier(v)) {
             Syntax s = (Syntax) v;
@@ -43,9 +44,9 @@ public class DupCheck {
             for (Object el : ((List<?>) v)) {
                 checkNoDuplicateIds1(el, ht);
             }
-        } else if (Procedures.isPair(v)) {
-            checkNoDuplicateIds1(Procedures.car(v), ht);
-            checkNoDuplicateIds1(Procedures.cdr(v), ht);
+        } else if (RT.isPair(v)) {
+            checkNoDuplicateIds1(RT.car(v), ht);
+            checkNoDuplicateIds1(RT.cdr(v), ht);
         }
     }
 

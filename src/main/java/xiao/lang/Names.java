@@ -26,15 +26,15 @@ public interface Names {
     String NEW = "new";
     String EVAL = "eval";
     String APPLY = "apply";
+    String EXPAND = "expand";
+    String DEBUGGER = "debugger";
 
     String QUOTE = "quote";
     String QUASIQUOTE = "quasiquote";
+    String SYNTAX = "syntax";
     String UNQUOTE = "unquote";
     String UNQUOTE_SPLICING = "unquote-splicing";
 
-    String SYNTAX_RULES = "syntax-rules";
-
-    String DEFINE = "define";
     String SET = "set!";
 
     String TRUE = "#t";

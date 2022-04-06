@@ -1,5 +1,9 @@
 package xiao.lang.expander;
 
+import xiao.lang.RT;
+import xiao.lang.Values;
+
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.function.*;
@@ -63,12 +67,24 @@ public class CUtils {
             CFrom extends Collection<From>,
             CTo extends Collection<To>>
     CTo map(CFrom c1, Function<From, To> mapper, Supplier<CTo> newer) {
-        CTo r = newer.get();
+        CTo r;
+        if (c1 instanceof Values.PList) {
+            r = ((CTo) new ArrayList<>(c1.size()));
+        } else {
+            r = newer.get();
+        }
+
+
         for (From el : c1) {
             To apply = mapper.apply(el);
             r.add(apply);
         }
-        return r;
+
+        if (c1 instanceof Values.PList) {
+            return ((CTo) RT.listColl(((ArrayList) r)));
+        } else {
+            return r;
+        }
     }
 
     public static<
@@ -83,7 +99,13 @@ public class CUtils {
             BiFunction<From1, From2, To> mapper,
             Supplier<CTo> newer
     ) {
-        CTo r = newer.get();
+        CTo r;
+        if (c1 instanceof Values.PList) {
+            r = ((CTo) new ArrayList<>(c1.size()));
+        } else {
+            r = newer.get();
+        }
+
         Iterator<From1> iter1 = c1.iterator();
         Iterator<From2> iter2 = c2.iterator();
         while (iter1.hasNext()) {
@@ -93,7 +115,12 @@ public class CUtils {
             r.add(mapper.apply(from1, from2));
         }
         expect(!iter2.hasNext());
-        return r;
+
+        if (c1 instanceof Values.PList) {
+            return ((CTo) RT.listColl(((ArrayList) r)));
+        } else {
+            return r;
+        }
     }
 
     public static<
@@ -111,7 +138,14 @@ public class CUtils {
             TriFunction<From1, From2, From3, To> mapper,
             Supplier<CTo> newer
     ) {
-        CTo r = newer.get();
+        CTo r;
+        if (c1 instanceof Values.PList) {
+            r = ((CTo) new ArrayList<>(c1.size()));
+        } else {
+            r = newer.get();
+        }
+
+
         Iterator<From1> iter1 = c1.iterator();
         Iterator<From2> iter2 = c2.iterator();
         Iterator<From3> iter3 = c3.iterator();
@@ -125,7 +159,12 @@ public class CUtils {
         }
         expect(!iter2.hasNext());
         expect(!iter3.hasNext());
-        return r;
+
+        if (c1 instanceof Values.PList) {
+            return ((CTo) RT.listColl(((ArrayList) r)));
+        } else {
+            return r;
+        }
     }
 
     //////////////////////////////////////////////////////////////////////////////

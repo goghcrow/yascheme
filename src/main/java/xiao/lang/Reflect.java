@@ -9,6 +9,8 @@ import java.lang.reflect.*;
  */
 public class Reflect {
 
+    // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
+
     public static boolean instanceOf(String clsName, Object obj) {
         //noinspection ConstantConditions
         return classOf(clsName).isInstance(obj);
@@ -22,6 +24,8 @@ public class Reflect {
             return null;
         }
     }
+
+    // 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀
 
     public static Reflect klass(Class<?> clazz) {
         return new Reflect(clazz, null);

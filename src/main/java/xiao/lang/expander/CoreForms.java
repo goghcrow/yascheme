@@ -1,24 +1,27 @@
 package xiao.lang.expander;
 
-import xiao.lang.Env;
+import xiao.lang.Interp;
 import xiao.lang.InterpError;
-import xiao.lang.Procedures;
+import xiao.lang.RT;
+import xiao.lang.Values;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static xiao.lang.Contract.expect;
 import static xiao.lang.Misc.Nullable;
 import static xiao.lang.Pattern.Finder;
-import static xiao.lang.Procedures.*;
-import static xiao.lang.Reader.MemberAccessorExpansion.isJavaClassName;
+import static xiao.lang.RT.*;
+import static xiao.lang.Reader.isJavaClassName;
+import static xiao.lang.Reader.isStaticMethodCall;
 import static xiao.lang.Values.PList;
 import static xiao.lang.Values.Symbol;
 import static xiao.lang.expander.CUtils.each;
 import static xiao.lang.expander.CUtils.map;
 import static xiao.lang.expander.Expansion.*;
-import static xiao.lang.expander.Utils.match;
-import static xiao.lang.expander.Utils.tryMatch;
+import static xiao.lang.expander.SyntaxMatcher.match;
+import static xiao.lang.expander.SyntaxMatcher.tryMatch;
 
 /**
  * expand-expr
@@ -42,28 +45,21 @@ public interface CoreForms {
 
         // local-scope
         // Fully Expanded Program 的 binding form （let-values、#%plain-lambda等）所引入的scope，
-        // 用于区分local 的 binding. 另外，quote-syntax（不带#:local）完全展开时，会删去结果中的local scope.
-        Scope sc = Scope.of();
+        // 用于区分 local 的 binding. 另外，quote-syntax（不带#:local）完全展开时，会删去结果中的local scope.
+        Scope sc = Scope.of(Scope.Type.local_lambda, s);
 
         // Parse and check formal arguments:
         PList ids = parseAndFlattenFormals(formals, sc);
         DupCheck.checkNoDuplicateIds(ids, s);
         // Bind each argument and generate a corresponding key for the
         // expand-time environment:
-        Env bodyEnv = ctx.env.derive();
-        for (int i = 0; i < ids.size(); i++) {
-            Syntax id = (Syntax) ids.get(i);
-            if (Syntax.isDot(id)) { // 处理 a . rest
-                expect( i != 0 && i == ids.size() - 2);
-            } else {
-                Symbol key = Bindings.addLocalBinding(id);
-                bodyEnv.put(key.name, Bindings.variable);
-            }
+        ExpandContext bodyCtx = ctx.deriveEnv(new ExpandContext.Type.Body(ctx.type), ctx.scopes.add(sc));
+        for (Object id : ids) {
+            Symbol key = Binding.addLocalBinding((Syntax) id);
+            bodyCtx.env.put(key.name, Binding.variable);
         }
 
         // Expand the function body:
-        ExpandContext bodyCtx = ctx.newEnv(bodyEnv);
-
         // Return formals (with new scope) and expanded body:
         if (lambda == null) {
             return list(
@@ -99,7 +95,7 @@ public interface CoreForms {
             return Null();
         } else if (formals instanceof PList) {  // fast-route
             // isPair + isNull 两个路径可以替代 Plist
-            return Procedures.map(id -> {
+            return RT.map(id -> {
                 expect(Syntax.isIdentifier(id), "not an identifier:" + id);
                 return Scope.add(id, sc);
             }, ((PList) formals));
@@ -148,8 +144,8 @@ public interface CoreForms {
     static SyntaxTransformer makeLetValuesForm(boolean syntaxes, boolean rec) { return (s, ctx) -> {
         // local-scope
         // Fully Expanded Program 的 binding form （let-values、#%plain-lambda等）所引入的scope，
-        // 用于区分local的 binding. 另外，quote-syntax（不带#:local）完全展开时，会删去结果中的local scope.
-        Scope sc = Scope.of();
+        // 用于区分local 的 binding. 另外，quote-syntax（不带#:local）完全展开时，会删去结果中的local scope.
+        Scope sc = Scope.of(rec ? Scope.Type.letrec_body : Scope.Type.local_let, s);
 
         // Add the new scope to each binding identifier:
         Finder r;
@@ -181,28 +177,27 @@ public interface CoreForms {
 
         // Bind each left-hand identifier and generate a corresponding key
         // fo the expand-time environment:
-        List<List<Symbol>> transKeyss = map(transIdss, ids -> map(ids, Bindings::addLocalBinding));
-        List<List<Symbol>> valKeyss = map(valIdss, ids -> map(ids, Bindings::addLocalBinding));
+        List<List<Symbol>> transKeyss = map(transIdss, ids -> map(ids, Binding::addLocalBinding));
+        List<List<Symbol>> valKeyss = map(valIdss, ids -> map(ids, Binding::addLocalBinding));
 
         // Evaluate compile-time expressions (if any):
-        List<PList> transValss = map(transRhss, transIdss, (rhs, ids) -> evalForSyntaxesBinding(rhs, ids, ctx));
+        List<List<ClosureTransformer>> transValss =
+                map(transRhss, transIdss, (rhs, ids) -> evalForSyntaxesBinding(rhs, ids, ctx));
 
         // Fill expansion-time environment:
-        Env recEnv = ctx.env.derive();
+        ExpandContext recCtx = ctx.deriveEnv(new ExpandContext.Type.Body(ctx.type), ctx.scopes.add(sc));
         for (List<Symbol> keys : valKeyss) {
             for (Symbol key : keys) {
-                recEnv.put(key.name, Bindings.variable);
+                recCtx.env.put(key.name, Binding.variable);
             }
         }
         each(transKeyss, transValss, (keys, vals) -> {
             each(keys, vals, (key, val) -> {
-                recEnv.put(key.name, val);
+                recCtx.env.put(key.name, val);
             });
         });
 
         // Expand right-hand sides and bodyL
-        ExpandContext recCtx = ctx.newEnv(recEnv);
-
         Syntax letrecValuesId;
         if (syntaxes) {
             // let[rec]-syntaxes+values` 翻译成 letrec-values
@@ -216,8 +211,8 @@ public interface CoreForms {
                 listColl(map(valIdss, valRhss, (ids, rhs) -> list(
                         listColl(map(ids, id -> id)),
                         rec ?   // 注意这里, rec 加 sc, 非 rec 不加, rec 新 ctx
-                                expand(Scope.add(rhs, sc), recCtx) :
-                                expand(rhs, ctx)
+                                Expansion.expand(Scope.add(rhs, sc), recCtx) :
+                                Expansion.expand(rhs, ctx)
                 ))),
                 expandBody(bodys, sc, s, recCtx)
         ));
@@ -228,7 +223,7 @@ public interface CoreForms {
     static Syntax datum(Syntax s, ExpandContext ctx) {
         Finder r = match("(#%datum . datum)", s);
         Syntax datum = r.get("datum");
-        expect(!Procedures.isKeyword(s), "keyword misused as an expression: " + datum);
+        expect(!isKeyword(s), "keyword misused as an expression: " + datum);
 
         return rebuild(s, list(
                 Syntax.fromDatum(Core.coreStx, sym("quote")),
@@ -244,8 +239,8 @@ public interface CoreForms {
 
         return rebuild(s, list(
                 app,
-                expand(rator, ctx),
-                splice(map(rands, rand -> expand(rand, ctx)))
+                Expansion.expand(rator, ctx),
+                splice(map(rands, rand -> Expansion.expand(rand, ctx)))
         ));
     }
 
@@ -255,80 +250,194 @@ public interface CoreForms {
     }
 
     static Syntax quote(Syntax s, ExpandContext ctx) {
-        match("(quote datum)", s.e);
-        return s;
+        Finder r = match("(quote datum)", s.e);
+        Syntax quote = r.get("quote");
+        Syntax datum = r.get("datum");
+        return rebuild(s, list(
+                quote,
+                datum
+        ));
     }
 
+    // 1. The syntax is of quasiquote is (quasiquote expr) which can be abbreviated as `expr.
+    // 2. The syntax is of unquote is (unquote expr) which can be abbreviated as ,expr.
+    // 3. (unquote expr) can only appear inside of a quasiquoted expression.
+    // 4. If the quasiquoted expression contains no unquoted sub-expressions, then (quasiquote expr) is equivalent to (quote expr).
+    // 5. If an (unquote expr) appears in a quasiquoted expression, then (unquote expr) is replaced by the evaluated expression expr.
+    // 6. If a (quasiquote expr) appears in a quasiquoted expression, it is unchanged.
     static Syntax quasiquote(Syntax s, ExpandContext ctx) {
         Finder r = match("(quasiquote datum)", s.e);
-        Syntax quasiquote = r.get("quasiquote");
         Syntax datum = r.get("datum");
-        if (Syntax.isList(datum)) {
-            if (isNull(datum.e)) {
-                return s;
-            } else {
-                return rebuild(s, list(
-                        quasiquote,
-                        doQuasiquote(datum, ctx)
-                ));
-            }
-        } else {
-            return s;
-        }
+        return rebuild(s, Quasiquote.expand(datum, ctx));
     }
 
-    static Object doQuasiquote(Object datum, ExpandContext ctx) {
-        Object lst = toSyntaxList(datum);
-        if (lst == Boolean.FALSE) {
-            return datum;
-        } else if (isNull(lst)) {
-            return datum;
-        } else if (isPair(lst)) {
-            Object rest = doQuasiquote(cdr(lst), ctx);
-            Finder r = tryMatch("(id:unquote form)", car(lst));
-            if (r != null) {
-                Syntax unquote = r.get("id:unquote");
-                Syntax form = r.get("form");
-                String name = ((Symbol) unquote.e).name;
-                if (name.equals("unquote") || name.equals("unquote-splicing")) {
-                    return cons(list(unquote, expand(form, ctx)), rest);
+    // 算法来自
+    // https://groups.csail.mit.edu/mac/ftpdir/scheme-mail/HTML/rrrs-1986/msg00000.html
+    // https://groups.csail.mit.edu/mac/ftpdir/scheme-mail/HTML/rrrs-1986/msg00002.html
+    // 并添加 vector 支持
+    class Quasiquote {
+        public static Object expand(Syntax s, ExpandContext ctx) {
+            return expand(s, ctx, s, 0);
+        }
+
+        static Object expand(Syntax s, ExpandContext ctx, Object x, int n) {
+            if (Stx.isPair(x)) {
+                Object car = Stx.car(x);
+                Object cdr = Stx.cdr(x);
+
+                if (equal(car, quasiquote)) {
+                    check(x);
+                    return quasiCons(list(quote, quasiquote), expand(s, ctx, cdr, n + 1));
+                }
+                if (equal(car, unquote)) {
+                    check(x);
+                    if (n == 0 && !Binding.isLocalBinding(s, "unquote")) {
+                        Object uq = Stx.car(cdr);
+                        // return uq;
+                        return Expansion.expand(((Syntax) uq), ctx);
+                    } else {
+                        return quasiCons(list(quote, unquote), expand(s, ctx, cdr, n - 1));
+                    }
+                }
+                // `,@a 不合法
+                if (equal(car, unquoteSplice) && !Binding.isLocalBinding(s, "unquote-splicing")) {
+                    if (n == 0) {
+                        throw new InterpError("invalid context for unquote-splice");
+                    } else {
+                        return quasiCons(list(quote, unquoteSplice), expand(s, ctx, cdr, n - 1));
+                    }
+                }
+                // 必须是 `(,@a ...)
+                if (n == 0
+                        && Stx.isPair(car) && equal(Stx.car(car), unquoteSplice)
+                        && !Binding.isLocalBinding(s, "unquote-splicing")) {
+                    check(car);
+                    Object splice = Expansion.expand(((Syntax) Stx.cadr(car)), ctx);
+                    Object d = expand(s, ctx, cdr, n);
+                    if (Stx.isNull(d)) {
+                        return splice;
+                    } else {
+                        return list(app, append, splice, d);
+                    }
+                }
+
+                Object a = expand(s, ctx, car, n);
+                Object d = expand(s, ctx, cdr, n);
+                return quasiCons(a, d);
+            } else if (Stx.isVector(x)) {
+                // 把 vector 的 quasiquote 转换成统一的 pair 处理
+                PList lst = list(((Object[]) ((Syntax) x).e));
+                Syntax s_lst = Syntax.fromDatum(s, lst);
+                Object exp = expand(s, ctx, s_lst, n);
+                PList toArray = list(dot, exp, list(sym("toArray")));
+                // return dot(Syntax.fromDatum(s, toArray), ctx);
+                return Syntax.fromDatum(s, toArray);
+            } else {
+                return list(quote, x);
+            }
+        }
+
+        static Object quasiCons(Object a, Object d) {
+            if (Stx.isPair(d)) {
+                Object card = Stx.car(d);
+                Object cdrd = Stx.cdr(d);
+                if (equal(card, quote)) {
+                    Object qd = Stx.car(cdrd);
+                    if (Stx.isPair(a) && equal(Stx.car(a), quote)) {
+                        Object qa = Stx.cadr(a);
+                        return list(quote, cons(qa, qd));
+                    } else {
+                        if (Stx.isNull(qd)) {
+                            return list(app, list, a);
+                        } else {
+                            return list(app, listStar, a, d);
+                        }
+                    }
+                } else if (equal(card, list) || equal(card, listStar)) {
+                    expect(Stx.isList(cdrd), "");
+                    if (card instanceof Syntax) {
+                        card = ((Syntax) card).e;
+                    }
+                    return list(card, a, splice(((PList) Stx.toList(cdrd))));
                 } else {
-                    Object fst = doQuasiquote(car(lst), ctx);
-                    return cons(fst, rest);
+                    return list(app, listStar, a, d);
                 }
             } else {
-                Object fst = doQuasiquote(car(lst), ctx);
-                return cons(fst, rest);
+                return list(app, listStar, a, d);
             }
-        } else {
-            return datum;
         }
+
+        static void check(Object x) {
+            expect(Stx.isPair(Stx.cdr(x)) && Stx.isNull(Stx.cdr(Stx.cdr(x))),
+                    "invalid form: " + Stx.car(x));
+        }
+
+        static boolean equal(Object x, Syntax id) {
+            if (x instanceof Syntax) {
+                return equal(((Syntax) x).e, id);
+            } else {
+                return id.e.equals(x);
+            }
+        }
+
+        final static Syntax quasiquote = Syntax.fromDatum(Core.coreStx, sym("quasiquote"));
+        final static Syntax quote = Syntax.fromDatum(Core.coreStx, sym("quote"));
+        final static Syntax unquote = Syntax.fromDatum(Core.coreStx, sym("unquote"));
+        final static Syntax unquoteSplice = Syntax.fromDatum(Core.coreStx, sym("unquote-splicing"));
+
+        final static Syntax app = Syntax.fromDatum(Core.coreStx, sym("#%app"));
+        final static Syntax append = Syntax.fromDatum(Core.coreStx, sym("append"));
+        final static Syntax listStar = Syntax.fromDatum(Core.coreStx, sym("list*"));
+        final static Syntax list = Syntax.fromDatum(Core.coreStx, sym("list"));
+
+        final static Syntax dot = Syntax.fromDatum(Core.coreStx, sym("."));
     }
 
-    // return PList | false
     // 把符合 list 形式的 syntax 解开 syntax 处理成正常的 list<syntax>, e.g.
     // (syntax:1 . syntax:(syntax:2 syntax:3)) => (syntax:1 syntax:2 syntax:3)
     // (syntax:1 . (syntax:2 . (syntax:3 . syntax:null))) => (syntax:1 syntax:2 syntax:3)
-    static Object toSyntaxList(Object s) {
+    static Optional<PList> toSyntaxList(Object s) {
         if (s instanceof Syntax) {
             return toSyntaxList(((Syntax) s).e);
         } else if (isList(s)) {
-            return s;
+            return Optional.of(((PList) s));
         } else if (isPair(s)) {
-            Object cdr = toSyntaxList(cdr(s));
-            if (cdr == Boolean.FALSE) {
-                return cdr;
-            } else {
-                return cons(car(s), cdr); // loop
-            }
+            return toSyntaxList(cdr(s)).map(cdr -> cons(car(s), cdr));
         } else {
-            return Boolean.FALSE;
+            return Optional.empty();
         }
     }
 
+    static Syntax doQuoteSyntax(Syntax d, ExpandContext ctx) {
+        ScopeSet scs = d.scopes.remove(ctx.scopes);
+        if (ctx.useSiteScopes != null) {
+            scs = scs.remove(ctx.useSiteScopes);
+        }
+        return Syntax.of(d.e, scs.set.toArray(new Scope[0]));
+    }
+
+    // creates a quoted syntax, with its lexical source from the place it appears.
+    // Similar to quote, but produces a syntax object that preserves the lexical information
+    // attached to datum at expansion time.
     static Syntax quoteSyntax(Syntax s, ExpandContext ctx) {
-        match("(quote-syntax datum)", s.e);
-        return s;
+        Finder r = tryMatch("(quote-syntax datum)", s.e);
+        if (r == null) {
+            match("(quote-syntax datum local)", s.e);
+            return s;
+        } else {
+            // 参考 racket 文档
+            Syntax d = r.get("datum");
+            Syntax datumS = doQuoteSyntax(d, ctx);
+            return rebuild(s, list(r.get("quote-syntax"), datumS));
+        }
+    }
+
+    // 不支持模板, 相当于 quote-syntax
+    static Syntax syntax(Syntax s, ExpandContext ctx) {
+        Finder r = match("(syntax id)", s.e);
+        Syntax d = r.get("id");
+        Syntax datumS = doQuoteSyntax(d, ctx);
+        return rebuild(s, list(sym("quote-syntax"), datumS));
     }
 
     static Syntax iff(Syntax s, ExpandContext ctx) {
@@ -340,9 +449,9 @@ public interface CoreForms {
 
         return rebuild(s, list(
                 iff,
-                expand(tst, ctx),
-                expand(thn, ctx),
-                expand(els, ctx)
+                Expansion.expand(tst, ctx),
+                Expansion.expand(thn, ctx),
+                Expansion.expand(els, ctx)
         ));
     }
 
@@ -355,9 +464,9 @@ public interface CoreForms {
 
         return rebuild(s, list(
                 wcm,
-                expand(key, ctx),
-                expand(val, ctx),
-                expand(body, ctx)
+                Expansion.expand(key, ctx),
+                Expansion.expand(val, ctx),
+                Expansion.expand(body, ctx)
         ));
     }
 
@@ -367,16 +476,32 @@ public interface CoreForms {
         List<Syntax> es = r.get("e");
         return rebuild(s, list(
                 begin,
-                splice(map(es, e -> expand(e, ctx)))
+                splice(map(es, e -> Expansion.expand(e, ctx)))
         ));
     }
 
     static Syntax provide(Syntax s, ExpandContext ctx) {
         Finder r = match("(provide id ...)", s);
         List<Syntax> ids = r.get("id");
+
+        List<Syntax> nonTransformerIds = new ArrayList<>(ids.size());
+        for (Syntax id : ids) {
+            Binding binding = Scope.resolve(id);
+            expect(binding != null, "illegal use of syntax: " + s);
+            Object t = binding.lookup(ctx, id);
+            if (Binding.isVariable(t)) {
+                nonTransformerIds.add(id);
+            } else if (Binding.isTransformer(t)) {
+                throw new InterpError("unsupported provide transformer: " + id);
+            } else {
+                throw new InterpError("illegal use of syntax: " + s);
+            }
+        }
+
+        // eval 期间导出 procedure
         return rebuild(s, list(
                 Syntax.fromDatum(Core.coreStx, sym("begin")),
-                splice(map(ids, id -> list(
+                splice(map(nonTransformerIds, id -> list(
                         Syntax.fromDatum(Core.coreStx, sym("#%app")),
                         Syntax.fromDatum(Core.coreStx, sym("namespace-set-variable-value!")),
                         list(
@@ -406,13 +531,13 @@ public interface CoreForms {
         Binding b = Scope.resolve(id);
         expect(b != null, "no binding for assignment: " + s);
         Object t = b.lookup(ctx, s);
-        expect(Bindings.isVariable(t), "cannot assign to syntax: " + s);
+        expect(Binding.isVariable(t), "cannot assign to syntax: " + s);
 
-        return rebuild(s, list(set, id, expand(rhs, ctx)));
+        return rebuild(s, list(set, id, Expansion.expand(rhs, ctx)));
     }
 
     static Syntax setField(Syntax s, ExpandContext ctx) {
-        Finder r = match("(set! (. cls-or-ins id:field) rhs)", new String[] { "." }, s);
+        Finder r = match("(set! (. cls-or-ins id:field) rhs)", s, ".");
         Syntax set = r.get("set!");
         Syntax dot = Syntax.fromDatum(Core.coreStx, sym("."));
         Syntax clsOrIns = r.get("cls-or-ins");
@@ -427,7 +552,7 @@ public interface CoreForms {
                         expandClassOrInstance(clsOrIns, ctx),
                         field
                 ),
-                expand(rhs, ctx)
+                Expansion.expand(rhs, ctx)
         ));
     }
 
@@ -439,7 +564,7 @@ public interface CoreForms {
         return rebuild(s, list(
                 new1,
                 className,
-                splice(map(args, arg -> expand(arg, ctx)))
+                splice(map(args, arg -> Expansion.expand(arg, ctx)))
         ));
     }
 
@@ -483,7 +608,7 @@ public interface CoreForms {
                 expandClassOrInstance(clsOrIns, ctx),
                 list(
                         method,
-                        splice(map(args, arg -> expand(arg, ctx)))
+                        splice(map(args, arg -> Expansion.expand(arg, ctx)))
                 )
         ));
     }
@@ -506,12 +631,17 @@ public interface CoreForms {
                 dot,
                 expandClassOrInstance(clsOrIns, ctx),
                 member,
-                splice(map(args, arg -> expand(arg, ctx)))
+                splice(map(args, arg -> Expansion.expand(arg, ctx)))
         ));
     }
 
     static Syntax expandClassOrInstance(Syntax clsOrIns, ExpandContext ctx) {
-        return isJavaClassName(clsOrIns.unbox()) ? clsOrIns : expand(clsOrIns, ctx);
+        if (isJavaClassName(clsOrIns.unbox())) {
+            assert !isStaticMethodCall(clsOrIns.unbox());
+            return clsOrIns;
+        } else {
+            return Expansion.expand(clsOrIns, ctx);
+        }
     }
 
 }
